@@ -136,10 +136,73 @@ docker-compose up --build -d
 
 Ensure `.env` file is present in root and passed to containers.
 
-- `DATABASE_URL`
-- `REDIS_URL`
-- `JWT_SECRET`
-- `GEMINI_API_KEY`
+```evn(copy & paste)
+# ============================================================
+# ZenC AI Ecosystem – Environment Configuration
+# ============================================================
+
+# ═══ AI Providers ═══
+AI_PROVIDER_PRIMARY=gemini
+AI_PROVIDER_FALLBACK=openai
+
+# ═══ OpenAI Realtime API ═══
+OPENAI_API_KEY=sk-your-openai-api-key
+OPENAI_REALTIME_MODEL=gpt-4o-realtime-preview
+OPENAI_REALTIME_WS_URL=wss://api.openai.com/v1/realtime
+
+# ═══ Conversation Engine ═══
+CONVERSATION_MAX_DURATION_MINUTES=30
+REALTIME_GRAMMAR_ENABLED=true
+REALTIME_PRONUNCIATION_ENABLED=true
+
+# ── SQL Server (MSSQL 2022) ──────────────────────────────────
+MSSQL_SA_PASSWORD=ZenC@Str0ng!Pass2026
+MSSQL_DATABASE=zenc_ai
+MSSQL_HOST=sql-server
+MSSQL_PORT=1433
+
+# ── Redis ────────────────────────────────────────────────────
+REDIS_HOST=redis
+REDIS_PORT=6379
+REDIS_PASSWORD=zenc_redis_secret
+REDIS_MAXMEMORY=256mb
+REDIS_MAXMEMORY_POLICY=allkeys-lru
+
+# ── Qdrant (Vector DB) ──────────────────────────────────────
+QDRANT_HOST=qdrant
+QDRANT_PORT=6333
+QDRANT_COLLECTION=zenc_curriculum
+
+# ── Gateway Server (NestJS) ─────────────────────────────────
+GATEWAY_PORT=3000
+JWT_SECRET=zenc_jwt_super_secret_key_change_in_production
+JWT_REFRESH_SECRET=zenc_jwt_refresh_secret_key_change_in_production
+JWT_EXPIRATION=15m
+JWT_REFRESH_EXPIRATION=7d
+
+# ── AI Worker (FastAPI) ─────────────────────────────────────
+WORKER_PORT=8000
+
+# ── Google Gemini API ────────────────────────────────────────
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_EMBEDDING_MODEL=text-embedding-004
+GEMINI_WS_URL=wss://generativelanguage.googleapis.com/ws
+
+# ── Feature Flags ────────────────────────────────────────────
+FEATURE_PROACTIVE_GREETING=true
+FEATURE_RAG_ENABLED=true
+FEATURE_VN_HINT=true
+FEATURE_AUDIO_RECORDING=false
+
+# ── Security ─────────────────────────────────────────────────
+TOKEN_WATCHDOG_THRESHOLD=500
+BCRYPT_SALT_ROUNDS=12
+ADMIN_SECRET_KEY=zenc_admin_bootstrap_key
+
+# ── Node Environment ────────────────────────────────────────
+NODE_ENV=development
+```
 
 ### 5.3 Scaling
 

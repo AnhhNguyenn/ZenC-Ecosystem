@@ -1,0 +1,120 @@
+.sidebar {
+  width: 280px;
+  height: 100vh;
+  position: fixed;
+  left: 0;
+  top: 0;
+  background-color: var(--bg-card);
+  border-right: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
+  transition: transform var(--transition-base);
+
+  @media (max-width: 1024px) {
+    transform: translateX(-100%);
+  }
+}
+
+.header {
+  padding: var(--spacing-6);
+  height: 80px;
+  display: flex;
+  align-items: center;
+}
+
+.nav {
+  flex: 1;
+  padding: var(--spacing-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  padding: var(--spacing-3) var(--spacing-4);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-weight: 500;
+  transition: all var(--transition-base);
+  position: relative;
+
+  &:hover {
+    background-color: var(--bg-surface);
+    color: var(--text-primary);
+  }
+}
+
+.active {
+  background-color: rgba(79, 70, 229, 0.08); // Primary light
+  color: var(--color-primary);
+
+  &:hover {
+    background-color: rgba(79, 70, 229, 0.12);
+  }
+}
+
+.activeIndicator {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 20px;
+  background-color: var(--color-primary);
+  border-top-left-radius: 4px;
+  border-bottom-left-radius: 4px;
+}
+
+.footer {
+  padding: var(--spacing-4);
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-4);
+}
+
+.upgradeCard {
+  background: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
+  padding: var(--spacing-4);
+  border-radius: var(--radius-lg);
+  color: white;
+}
+
+.upgradeContent {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.upgradeTitle {
+  font-weight: 700;
+  font-size: var(--font-size-sm);
+  margin-bottom: 2px;
+}
+
+.upgradeDesc {
+  font-size: var(--font-size-xs);
+  opacity: 0.9;
+}
+
+.logoutButton {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  padding: var(--spacing-3) var(--spacing-4);
+  color: var(--text-secondary);
+  font-weight: 500;
+  width: 100%;
+  text-align: left;
+  border-radius: var(--radius-md);
+  transition: all var(--transition-base);
+
+  &:hover {
+    background-color: #fef2f2;
+    color: var(--color-error);
+  }
+}

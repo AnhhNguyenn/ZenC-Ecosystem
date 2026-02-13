@@ -1,0 +1,45 @@
+.logo {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  font-weight: 700;
+  color: var(--text-primary);
+  text-decoration: none;
+  transition: opacity var(--transition-base);
+
+  &:hover {
+    opacity: 0.9;
+  }
+}
+
+.iconWrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--color-primary);
+  color: white;
+  border-radius: var(--radius-md);
+}
+
+.highlight {
+  color: var(--color-primary);
+}
+
+// Sizes
+.sm {
+  font-size: var(--font-size-lg);
+  .iconWrapper { width: 28px; height: 28px; }
+  .icon { width: 16px; height: 16px; }
+}
+
+.md {
+  font-size: var(--font-size-xl);
+  .iconWrapper { width: 32px; height: 32px; }
+  .icon { width: 20px; height: 20px; }
+}
+
+.lg {
+  font-size: var(--font-size-2xl);
+  .iconWrapper { width: 40px; height: 40px; }
+  .icon { width: 24px; height: 24px; }
+}

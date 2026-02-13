@@ -1,0 +1,108 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-8);
+  padding: var(--spacing-12);
+  position: relative;
+}
+
+.avatarCircle {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background-color: var(--bg-surface);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.5s ease;
+}
+
+.core {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background-color: var(--text-tertiary);
+  transition: all 0.3s ease;
+}
+
+.glow {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: all 0.5s ease;
+}
+
+// States
+.listening {
+  .core {
+    background-color: var(--color-primary);
+    transform: scale(1.1);
+  }
+  .glow {
+    background-color: var(--color-primary);
+    opacity: 0.2;
+    animation: pulse 2s infinite;
+  }
+}
+
+.thinking {
+  .core {
+    background-color: var(--color-accent);
+    animation: spin 3s linear infinite;
+    // Add gradient/shape for spinning effect
+    background: conic-gradient(from 0deg, var(--color-accent), transparent);
+  }
+}
+
+.speaking {
+  .core {
+    background-color: var(--color-success);
+    transform: scale(1.2);
+  }
+  .glow {
+    background-color: var(--color-success);
+    opacity: 0.3;
+    animation: pulse 1.5s infinite;
+  }
+}
+
+.waveWrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 60px;
+}
+
+.bar {
+  width: 6px;
+  background-color: var(--text-tertiary);
+  border-radius: 4px;
+  transition: height 0.1s ease, background-color 0.3s ease;
+}
+
+.listening .bar { background-color: var(--color-primary); }
+.speaking .bar { background-color: var(--color-success); }
+.thinking .bar { background-color: var(--color-accent); }
+
+.statusText {
+  font-size: var(--font-size-lg);
+  font-weight: 500;
+  color: var(--text-secondary);
+  min-height: 28px;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 0.2; }
+  50% { transform: scale(1.5); opacity: 0.1; }
+  100% { transform: scale(1); opacity: 0.2; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

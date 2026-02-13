@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  # ... (Existing Services)
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: zenc_db
+    ports:
+      - "5432:5432"
+
+  gateway-server:
+    build:
+      context: ./apps/gateway-server
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgres://postgres:password@postgres:5432/zenc_db
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - postgres
+      - redis
+
+  # New Frontend Services
+  web-user:
+    build:
+      context: ./apps/web-user
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://gateway-server:3000
+    depends_on:
+      - gateway-server
+
+  web-admin:
+    build:
+      context: ./apps/web-admin
+      dockerfile: Dockerfile
+    ports:
+      - "3002:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://gateway-server:3000
+    depends_on:
+      - gateway-server

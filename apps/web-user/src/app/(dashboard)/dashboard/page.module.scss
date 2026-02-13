@@ -1,0 +1,287 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-8);
+}
+
+.welcomeSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.greeting {
+  font-size: var(--font-size-2xl);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.subtitle {
+  color: var(--text-secondary);
+}
+
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--spacing-4);
+
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.statCard {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-4);
+  padding: var(--spacing-4);
+}
+
+.statIconWrapper {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  &[data-type="streak"] {
+    background-color: #fff7ed;
+    color: #ea580c;
+  }
+
+  &[data-type="xp"] {
+    background-color: #fefce8;
+    color: #ca8a04;
+  }
+
+  &[data-type="league"] {
+    background-color: #eff6ff;
+    color: #2563eb;
+  }
+}
+
+.statInfo {
+  display: flex;
+  flex-direction: column;
+}
+
+.statValue {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.statLabel {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.contentGrid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: var(--spacing-6);
+
+  @media (max-width: 1024px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.mainColumn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-8);
+}
+
+.challengeCard {
+  background: linear-gradient(135deg, var(--color-primary), #4338ca);
+  color: white;
+  padding: var(--spacing-8);
+  position: relative;
+  overflow: hidden;
+  border: none;
+}
+
+.challengeContent {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spacing-4);
+}
+
+.tag {
+  background-color: rgba(255, 255, 255, 0.2);
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.challengeTitle {
+  font-size: var(--font-size-2xl);
+  font-weight: 700;
+  margin-bottom: var(--spacing-2);
+}
+
+.challengeDesc {
+  font-size: var(--font-size-lg);
+  opacity: 0.9;
+  max-width: 80%;
+}
+
+.startButton {
+  background-color: white;
+  color: var(--color-primary);
+  margin-top: var(--spacing-2);
+
+  &:hover {
+    background-color: #f9fafb;
+    color: var(--color-primary-hover);
+  }
+}
+
+.challengeDecoration {
+  position: absolute;
+  right: -50px;
+  bottom: -50px;
+  width: 200px;
+  height: 200px;
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+}
+
+.courseSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-4);
+}
+
+.sectionTitle {
+  font-size: var(--font-size-xl);
+  font-weight: 600;
+}
+
+.courseCard {
+  display: flex;
+  overflow: hidden;
+  
+  @media (max-width: 640px) {
+    flex-direction: column;
+  }
+}
+
+.courseImage {
+  width: 200px;
+  background-color: #e5e7eb;
+  background-image: url('https://images.unsplash.com/photo-1573164713714-d95e436ab8d6?auto=format&fit=crop&q=80'); // Placeholder
+  background-size: cover;
+  background-position: center;
+
+  @media (max-width: 640px) {
+    width: 100%;
+    height: 150px;
+  }
+}
+
+.courseInfo {
+  flex: 1;
+  padding: var(--spacing-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+}
+
+.courseHeader {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.courseTitle {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+}
+
+.progressBar {
+  width: 100%;
+  height: 6px;
+  background-color: #f3f4f6;
+  border-radius: var(--radius-full);
+  margin: var(--spacing-2) 0;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background-color: var(--color-success);
+  border-radius: var(--radius-full);
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-4);
+}
+
+.cardTitle {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+}
+
+.viewAll {
+  font-size: var(--font-size-sm);
+  color: var(--color-primary);
+  font-weight: 500;
+}
+
+.leaderboardList {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+}
+
+.leaderboardItem {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  padding: var(--spacing-2) 0;
+  border-bottom: 1px solid #f3f4f6;
+  
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.rank {
+  font-weight: 700;
+  color: var(--text-tertiary);
+  width: 20px;
+  text-align: center;
+}
+
+.userAvatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background-color: #d1d5db;
+}
+
+.userName {
+  flex: 1;
+  font-weight: 500;
+  font-size: var(--font-size-sm);
+}
+
+.userXp {
+  font-weight: 600;
+  color: var(--color-warning);
+  font-size: var(--font-size-sm);
+}

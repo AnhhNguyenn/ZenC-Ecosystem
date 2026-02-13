@@ -1,0 +1,11 @@
+@import '../login/page.module.scss';
+
+// Extends/Reuses styles from login page
+// Specific overrides:
+.loginText {
+  @extend .registerText;
+}
+
+.loginLink {
+  @extend .registerLink;
+}

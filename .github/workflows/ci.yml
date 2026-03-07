@@ -1,0 +1,89 @@
+name: ZenC CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ─── Gateway Server (NestJS) ────────────────────────────────
+  gateway-server:
+    name: Gateway Server
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/gateway-server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/gateway-server/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test
+
+  # ─── Web User (Next.js) ────────────────────────────────────
+  web-user:
+    name: Web User
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web-user
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/web-user/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test
+
+  # ─── Web Admin (Next.js) ────────────────────────────────────
+  web-admin:
+    name: Web Admin
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web-admin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/web-admin/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test
+
+  # ─── AI Worker (Python/FastAPI) ─────────────────────────────
+  ai-worker:
+    name: AI Worker
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/ai-worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: pytest --tb=short -q

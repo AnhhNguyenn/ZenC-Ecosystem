@@ -22,10 +22,26 @@ Architecture:
 """
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
+import sentry_sdk
 from fastapi import FastAPI
+
+# ── Sentry Error Monitoring ──────────────────────────────────────
+sentry_dsn = os.getenv("SENTRY_DSN")
+if sentry_dsn:
+    sentry_sdk.init(
+        dsn=sentry_dsn,
+        environment=os.getenv("NODE_ENV", "development"),
+        traces_sample_rate=0.2 if os.getenv("NODE_ENV") == "production" else 1.0,
+        profiles_sample_rate=0.1,
+    )
+else:
+    logging.getLogger("zenc.worker").warning(
+        "[Sentry] SENTRY_DSN not set – error tracking disabled"
+    )
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import redis.asyncio as aioredis

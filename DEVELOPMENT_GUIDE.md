@@ -202,6 +202,10 @@ ADMIN_SECRET_KEY=zenc_admin_bootstrap_key
 
 # ── Node Environment ────────────────────────────────────────
 NODE_ENV=development
+
+# ── Sentry Error Monitoring ──────────────────────────────────
+SENTRY_DSN=
+NEXT_PUBLIC_SENTRY_DSN=
 ```
 
 ### 5.3 Scaling
@@ -214,12 +218,97 @@ docker-compose up -d --scale gateway-server=3
 
 ---
 
-## 6. Git Workflow
+## 7. Testing
 
-1.  **Branching**: `feature/feature-name`, `fix/bug-name`.
-2.  **Commits**: Conventional Commits (e.g., `feat: add voice visualizer`, `fix: resolve socket latency`).
-3.  **PR Reviews**: Mandatory for merging into `main`.
+### 7.1 Gateway Server (Jest)
+
+```bash
+cd apps/gateway-server
+npm test              # Run all tests
+npm run test:watch    # Watch mode
+npm run test:cov      # With coverage report
+```
+
+Test files use the `*.spec.ts` naming convention and are co-located with their source files.
+
+### 7.2 Web User & Web Admin (Jest + React Testing Library)
+
+```bash
+cd apps/web-user    # or apps/web-admin
+npm test
+npm run test:cov
+```
+
+Test files use the `*.test.tsx` naming convention and live in `src/__tests__/`.
+
+### 7.3 AI Worker (Pytest)
+
+```bash
+cd apps/ai-worker
+pip install -r requirements-dev.txt
+pytest --tb=short -q
+```
+
+Test files are in `tests/` directory.
+
+---
+
+## 8. CI/CD Pipeline
+
+We use **GitHub Actions** (`.github/workflows/ci.yml`).
+
+**Triggers:** Push to `main`, Pull Requests to `main`.
+
+**Jobs (parallel):**
+| Job | Steps |
+|---|---|
+| Gateway Server | Install → Lint → Build → Test |
+| Web User | Install → Lint → Build → Test |
+| Web Admin | Install → Lint → Build → Test |
+| AI Worker | Install → Pytest |
+
+---
+
+## 9. Error Monitoring (Sentry)
+
+All 4 apps integrate [Sentry](https://sentry.io) for runtime error tracking.
+
+### Setup
+
+1. Create projects at [sentry.io](https://sentry.io) for each app.
+2. Add DSN values to `.env`:
+   ```
+   SENTRY_DSN=https://your-gateway-dsn@sentry.io/xxx
+   NEXT_PUBLIC_SENTRY_DSN=https://your-frontend-dsn@sentry.io/xxx
+   ```
+
+### Configuration Files
+
+- **Gateway:** `src/common/sentry.config.ts` (loaded in `main.ts`)
+- **Web User / Admin:** `sentry.client.config.ts` + `sentry.server.config.ts`
+- **AI Worker:** Initialized directly in `main.py`
+
+---
+
+## 10. Code Formatting & Linting
+
+### Prettier
+
+Shared config at root (`.prettierrc`). Run in any JS/TS app:
+
+```bash
+npm run format          # Auto-fix formatting
+npm run format:check    # CI check (no changes)
+```
+
+### ESLint
+
+```bash
+npm run lint     # Lint with auto-fix (Gateway)
+npm run lint     # Lint check (Web apps)
+```
 
 ---
 
 **End of Guide**
+

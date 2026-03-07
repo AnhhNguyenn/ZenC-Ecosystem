@@ -2,6 +2,10 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, VersioningType, Logger } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/global-exception.filter';
+import { initSentry } from './common/sentry.config';
+
+// Initialize Sentry before anything else to capture bootstrap errors
+initSentry();
 
 /**
  * Bootstrap the ZenC AI Gateway Server.

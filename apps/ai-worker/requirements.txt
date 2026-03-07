@@ -12,3 +12,4 @@ tiktoken==0.7.0
 httpx==0.27.0
 python-multipart==0.0.9
 apscheduler==3.10.4
+sentry-sdk[fastapi]==2.0.0

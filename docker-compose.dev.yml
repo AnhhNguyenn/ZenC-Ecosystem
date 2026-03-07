@@ -1,0 +1,156 @@
+# ==============================================================
+# ZenC Ecosystem – Docker Compose (Development & Testing)
+#
+# Cách dùng:
+#   Chạy tất cả:     docker compose -f docker-compose.dev.yml up
+#   Chỉ chạy BE:     docker compose -f docker-compose.dev.yml up gateway-server
+#   Chỉ chạy FE:     docker compose -f docker-compose.dev.yml up web-user
+#   Chỉ chạy AI:     docker compose -f docker-compose.dev.yml up ai-worker
+#
+#   Test BE:          docker compose -f docker-compose.dev.yml run --rm gateway-test
+#   Test FE user:     docker compose -f docker-compose.dev.yml run --rm web-user-test
+#   Test FE admin:    docker compose -f docker-compose.dev.yml run --rm web-admin-test
+#   Test AI:          docker compose -f docker-compose.dev.yml run --rm ai-worker-test
+#   Test tất cả:      docker compose -f docker-compose.dev.yml run --rm gateway-test && docker compose -f docker-compose.dev.yml run --rm web-user-test && docker compose -f docker-compose.dev.yml run --rm web-admin-test && docker compose -f docker-compose.dev.yml run --rm ai-worker-test
+# ==============================================================
+
+services:
+  # ─── Infrastructure ──────────────────────────────────────────
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: zenc_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  # ─── Backend: Gateway Server (NestJS) – DEV ──────────────────
+  gateway-server:
+    build:
+      context: ./apps/gateway-server
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./apps/gateway-server/src:/app/src
+      - ./apps/gateway-server/nest-cli.json:/app/nest-cli.json
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgres://postgres:password@postgres:5432/zenc_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      - postgres
+      - redis
+    command: npm run start:dev
+
+  # ─── Backend: Gateway Server – TEST ───────────────────────────
+  gateway-test:
+    build:
+      context: ./apps/gateway-server
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./apps/gateway-server/src:/app/src
+    environment:
+      - NODE_ENV=test
+    command: npm test
+    profiles: [test]
+
+  # ─── Frontend: Web User (Next.js) – DEV ──────────────────────
+  web-user:
+    build:
+      context: ./apps/web-user
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./apps/web-user/src:/app/src
+      - ./apps/web-user/public:/app/public
+    environment:
+      - NEXT_PUBLIC_API_URL=http://gateway-server:3000
+      - WATCHPACK_POLLING=true
+    depends_on:
+      - gateway-server
+    command: npm run dev
+
+  # ─── Frontend: Web User – TEST ───────────────────────────────
+  web-user-test:
+    build:
+      context: ./apps/web-user
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./apps/web-user/src:/app/src
+    environment:
+      - NODE_ENV=test
+    command: npm test
+    profiles: [test]
+
+  # ─── Frontend: Web Admin (Next.js) – DEV ─────────────────────
+  web-admin:
+    build:
+      context: ./apps/web-admin
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3002:3000"
+    volumes:
+      - ./apps/web-admin/src:/app/src
+      - ./apps/web-admin/public:/app/public
+    environment:
+      - NEXT_PUBLIC_API_URL=http://gateway-server:3000
+      - WATCHPACK_POLLING=true
+    depends_on:
+      - gateway-server
+    command: npm run dev
+
+  # ─── Frontend: Web Admin – TEST ──────────────────────────────
+  web-admin-test:
+    build:
+      context: ./apps/web-admin
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./apps/web-admin/src:/app/src
+    environment:
+      - NODE_ENV=test
+    command: npm test
+    profiles: [test]
+
+  # ─── AI Worker (Python/FastAPI) – DEV ────────────────────────
+  ai-worker:
+    build:
+      context: ./apps/ai-worker
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./apps/ai-worker:/app
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+    depends_on:
+      - redis
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ─── AI Worker – TEST ────────────────────────────────────────
+  ai-worker-test:
+    build:
+      context: ./apps/ai-worker
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./apps/ai-worker:/app
+    environment:
+      - NODE_ENV=test
+    command: python -m pytest tests/ -v
+    profiles: [test]
+
+volumes:
+  pg_data:

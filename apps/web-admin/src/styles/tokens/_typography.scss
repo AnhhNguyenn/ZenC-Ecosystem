@@ -1,0 +1,33 @@
+/**
+ * Apple Human Interface Guidelines
+ * Typography Hierarchy (SF Pro)
+ */
+
+:root {
+  // Prioritize Apple's native system fonts before degrading to Inter
+  --font-family-base: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", Roboto, sans-serif;
+  
+  // Apple Large Title (iOS 17)
+  --font-size-page-title: 34px;
+  --font-weight-page-title: 700;
+  
+  // Apple Title 1
+  --font-size-section-title: 22px;
+  --font-weight-section-title: 600;
+  
+  // Apple Headline
+  --font-size-card-title: 17px;
+  --font-weight-card-title: 600;
+  
+  // Apple Body
+  --font-size-body: 17px; 
+  --font-weight-body: 400;
+  
+  // Apple Footnote/Caption
+  --font-size-meta: 13px;
+  --font-weight-meta: 400;
+
+  // macOS/iOS Line Heights (tighter on headings, looser on body)
+  --line-height-base: 1.4;
+  --line-height-heading: 1.15;
+}

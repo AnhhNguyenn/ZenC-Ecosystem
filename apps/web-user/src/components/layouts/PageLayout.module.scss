@@ -1,0 +1,43 @@
+.pageHeader {
+  margin-bottom: var(--spacing-xl);
+}
+
+.title {
+  font-size: var(--font-size-page-title);
+  font-weight: var(--font-weight-page-title);
+  color: var(--color-neutral-900);
+  margin-bottom: var(--spacing-xs);
+}
+
+.subtitle {
+  font-size: var(--font-size-body);
+  color: var(--color-neutral-500);
+}
+
+.statsSection {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr); // Strict max 4 cards per row
+  gap: var(--spacing-lg);
+  margin-bottom: var(--spacing-xl);
+}
+
+.dashboardGrid {
+  display: grid;
+  grid-template-columns: 7fr 3fr; // Strict 70/30 layout pattern
+  gap: var(--spacing-lg);
+}
+
+@media (max-width: 1024px) {
+  .dashboardGrid {
+    grid-template-columns: 1fr;
+  }
+  .statsSection {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .statsSection {
+    grid-template-columns: 1fr;
+  }
+}

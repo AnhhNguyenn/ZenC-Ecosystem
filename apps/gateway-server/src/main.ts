@@ -3,6 +3,7 @@ import { ValidationPipe, VersioningType, Logger } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/global-exception.filter';
 import { initSentry } from './common/sentry.config';
+import { RedisIoAdapter } from './common/redis-io.adapter';
 
 // Initialize Sentry before anything else to capture bootstrap errors
 initSentry();
@@ -26,6 +27,11 @@ async function bootstrap(): Promise<void> {
     type: VersioningType.URI,
     defaultVersion: '1',
   });
+
+  // ── WebSockets Scaling (Redis Adapter) ──────────────────────
+  const redisIoAdapter = new RedisIoAdapter(app);
+  await redisIoAdapter.connectToRedis(process.env.REDIS_URL || 'redis://localhost:6379');
+  app.useWebSocketAdapter(redisIoAdapter);
 
   // ── Global Pipes ────────────────────────────────────────────
   app.useGlobalPipes(

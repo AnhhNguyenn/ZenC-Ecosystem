@@ -1,0 +1,67 @@
+.sidebar {
+  width: 260px;
+  /* Apple Sidebar Glass */
+  background-color: var(--color-glass-overlay);
+  backdrop-filter: var(--effect-blur-heavy);
+  -webkit-backdrop-filter: var(--effect-blur-heavy);
+  border-right: 1px solid var(--color-neutral-200);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  flex-shrink: 0;
+}
+
+.header {
+  height: 64px;
+  padding: 0 var(--spacing-lg);
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--color-neutral-200);
+}
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-lg) var(--spacing-md);
+}
+
+.section {
+  margin-bottom: var(--spacing-xl);
+}
+
+.sectionTitle {
+  font-size: var(--font-size-meta);
+  font-weight: 600;
+  color: var(--color-neutral-500);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: var(--spacing-sm);
+  padding: 0 var(--spacing-xs);
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-md);
+  color: var(--color-neutral-700);
+  font-size: var(--font-size-body);
+  font-weight: 500;
+  transition: background-color 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    background-color: var(--color-neutral-200); // More subtle gray hover like MacOS Finder
+    color: var(--color-neutral-900);
+  }
+}
+
+.active {
+  background-color: var(--color-primary); // System Blue
+  color: white;
+
+  &:hover {
+    background-color: var(--color-primary-hover);
+    color: white;
+  }
+}

@@ -1,0 +1,116 @@
+.appShell {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background-color: var(--color-neutral-50);
+  position: relative;
+}
+
+.sidebarContainer {
+  height: 100%;
+  flex-shrink: 0;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 40;
+}
+
+.mainWrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.scrollArea {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-2xl);
+  
+  @media (max-width: 768px) {
+    padding: var(--spacing-lg) var(--spacing-md);
+  }
+}
+
+.mobileHeader {
+  display: none;
+  height: 64px;
+  align-items: center;
+  padding: 0 var(--spacing-md);
+  /* Appple Glass Navbar */
+  background-color: var(--color-glass-surface);
+  backdrop-filter: var(--effect-blur-medium);
+  -webkit-backdrop-filter: var(--effect-blur-medium);
+  border-bottom: 1px solid var(--color-neutral-200);
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.menuButton {
+  background: none;
+  border: none;
+  color: var(--color-neutral-700);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-xs);
+  transition: color 0.2s ease;
+
+  &:hover {
+    color: var(--color-primary);
+  }
+}
+
+.mobileTitle {
+  margin-left: var(--spacing-md);
+  font-weight: 800;
+  font-size: 18px;
+  color: var(--color-primary);
+}
+
+.mobileOverlay {
+  display: none;
+}
+
+/* -------------------------------- */
+/* MOBILE RESPONSIVE QUERIES        */
+/* -------------------------------- */
+@media (max-width: 768px) {
+  .sidebarContainer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    transform: translateX(-100%);
+    box-shadow: var(--shadow-xl);
+  }
+
+  .sidebarOpen {
+    transform: translateX(0);
+  }
+
+  .mobileHeader {
+    display: flex;
+  }
+
+  .desktopHeader {
+    display: none;
+  }
+
+  .mobileOverlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.3); /* iOS Modal Dimming */
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    z-index: 30;
+    animation: fadeIn 0.3s ease;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

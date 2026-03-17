@@ -1,0 +1,19 @@
+/**
+ * Apple Human Interface Guidelines
+ * Soft Shadows & Glass Materials
+ */
+
+:root {
+  // Apple diffuse ambient occlusion shadows
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);     // Buttons / Small Controls
+  --shadow-md: 0 4px 6px rgba(0,0,0,0.05), 0 1px 3px rgba(0,0,0,0.02);    // Cards (Resting)
+  --shadow-lg: 0 10px 15px rgba(0,0,0,0.05), 0 4px 6px rgba(0,0,0,0.02);  // Modals / Floating
+  
+  // Apple Glass Materials (Backdrop Filters)
+  --effect-blur-light: blur(10px) saturate(150%);
+  --effect-blur-medium: blur(20px) saturate(180%); // Navbars / Sidebars
+  --effect-blur-heavy: blur(40px) saturate(200%);  // Deep Overlays
+  
+  // Apple Focus Ring (Halation)
+  --focus-ring: 0 0 0 4px rgba(0, 122, 255, 0.3); // System Blue Ring
+}

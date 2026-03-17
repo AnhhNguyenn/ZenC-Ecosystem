@@ -1,4 +1,6 @@
-@import './variables.scss';
+@use "sass:color";
+@use "sass:math";
+@use "./tokens/index.scss" as *;
 
 * {
   box-sizing: border-box;
@@ -10,12 +12,10 @@ html,
 body {
   max-width: 100vw;
   overflow-x: hidden;
-  font-family: var(--font-family-sans);
-  background-color: var(--bg-body);
-  color: var(--text-primary);
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  font-family: var(--font-family-base);
+  background-color: var(--color-neutral-50);
+  color: var(--color-neutral-900);
+  line-height: var(--line-height-base);
 }
 
 a {
@@ -23,35 +23,7 @@ a {
   text-decoration: none;
 }
 
-button {
-  font-family: inherit;
-  cursor: pointer;
-  border: none;
-  background: none;
-}
-
-// Utility Classes (Minimal)
-.container {
-  width: 100%;
-  margin-left: auto;
-  margin-right: auto;
-  padding-left: var(--spacing-4);
-  padding-right: var(--spacing-4);
-
-  @include responsive(sm) { max-width: 640px; }
-  @include responsive(md) { max-width: 768px; }
-  @include responsive(lg) { max-width: 1024px; }
-  @include responsive(xl) { max-width: 1280px; }
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border-width: 0;
+h1, h2, h3, h4, h5, h6 {
+  line-height: var(--line-height-heading);
+  margin: 0;
 }

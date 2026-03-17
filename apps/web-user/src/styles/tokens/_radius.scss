@@ -1,0 +1,14 @@
+/**
+ * Apple Human Interface Guidelines
+ * Continuous-Curve Border Radius Scale
+ */
+
+:root {
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;  // iOS Standard Form Elements
+  --radius-lg: 16px;  // iOS Standard Cards / Tiles
+  --radius-xl: 24px;  // iOS Modals / Large Groups
+  --radius-pill: 9999px;
+  --radius-circle: 50%;
+}

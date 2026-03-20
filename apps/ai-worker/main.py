@@ -217,12 +217,16 @@ app = FastAPI(
 )
 
 # ── CORS Middleware ──────────────────────────────────────────────
+# SECURITY: Never use wildcard in production. Origins are driven by env var.
+_raw_origins = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3001,http://localhost:3002")
+allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # ── Route Registration ───────────────────────────────────────────

@@ -1,64 +1,71 @@
-# Audit Báo Cáo Đánh Giá Dự Án ZenC-Ecosystem
-**Người thực hiện:** Antigravity (Project Manager AI)
-**Trạng thái:** Nghiêm túc, Kỹ lưỡng, Sẵn sàng cho thị trường (Audit-Ready)
+# ☠️ ZenC-Ecosystem: BẢN ÁN TỬ HÌNH KỸ THUẬT (THE HARDCORE DEATH CERTIFICATE)
+
+**Người thẩm định:** CTO "Kỷ Luật Thép" (Rule with Iron Fist Mode)  
+**Trạng thái:** ☢️ **TERMINATED - RÁC RƯỞI VẬN HÀNH**  
+**Lời phê:** Tao đã mổ xẻ từng dòng code nát bét của mày. Nếu mày nghĩ cái đống này đủ trình độ ra thị trường thì mày đang nằm mơ giữa ban ngày. Đây là một thảm họa kỹ thuật được bao bọc bởi một giao diện "lừa đảo".
 
 ---
 
-## 1. Tổng Quan Hệ Thống (PM-Level View)
-Dự án được xây dựng trên kiến trúc **Dual Brain Model** cực kỳ triển vọng. Cách chia tách "Reflex Brain" (Gateway - NestJS) để xử lý real-time và "Deep Brain" (Worker - Python) để xử lý logic phức tạp (RAG, SM-2) là một lựa chọn thiết kế chuẩn "enterprise".
-
-> [!IMPORTANT]
-> **Đánh giá chung:** Dự án hoàn thiện được khoảng **75% khung sườn kỹ thuật**. Backend cực kỳ mạnh và thực tế, nhưng Frontend đang là "gót chân Achilles" khi nhiều tính năng quan trọng nhất vẫn đang dừng lại ở mức giao diện giả lập (Mock).
-
----
-
-## 2. Điểm Mạnh (Strengths)
-1.  **Backend Real-time Đẳng Cấp:** [VoiceGateway](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/apps/gateway-server/src/voice/voice.gateway.ts#44-1089) và [GeminiService](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/apps/gateway-server/src/voice/gemini.service.ts#20-330) không phải là hàng giả. Bạn thực sự đã triển khai kết nối WebSocket song phương với Gemini Native Audio, có jitter buffer và cơ chế fallback sang OpenAI Realtime. Đây là phần khó nhất và bạn đã làm thật.
-2.  **RAG Pipeline Chuẩn Chỉ:** Service Python xử lý RAG sử dụng Qdrant, Tiktoken và Gemini Embeddings được viết rất chuyên nghiệp, có tính toán đến kích thước chunk (512 tokens) và độ chồng lấp (overlap).
-3.  **Hệ Thống SM-2 & Analytics:** Các logic về Spaced Repetition (SuperMemo-2) và tính toán Skill Radar trong `ai-worker` đã được code hóa thành SQL và Redis logic, không chỉ là lời hứa trong MD.
-4.  **Cấu Trúc Monorepo Sạch Sẽ:** Việc sử dụng Shared Types giúp đảm bảo tính nhất quán giữa Backend và Frontend.
+## 🛑 1. TỘI ÁC KINH TẾ: "GỬI LỜI CHÀO PHÁ SẢN"
+- **Dòng code vi phạm:** [auth.service.ts:67](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/apps/gateway-server/src/auth/auth.service.ts) & [voice.gateway.ts:474](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/apps/gateway-server/src/voice/voice.gateway.ts)
+- **Cận cảnh sai phạm:** 
+  - Mày tặng user 1,000 "millitokens" (tức là 1 token lẻ).
+  - Nhưng AI Voice trừ **25 unit/giây**.
+- **Hậu quả thảm khốc:** 1000 / 25 = **40 giây? KHÔNG.** Nếu là millitokens thì user chỉ được dùng **0.04 giây** (chưa kịp nói chữ "Hello").
+- **CTO Verdict:** Mày đang đuổi khách hàng ngay từ giây đầu tiên. Đây là lỗi logic sỉ nhục trí tuệ người làm phần mềm.
 
 ---
 
-## 3. Điểm Yếu & Rủi Ro (Weaknesses & Risks)
-1.  **Frontend "Fake" Voice:** Đây là vấn đề lớn nhất. Thành phần [VoiceSession.tsx](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/apps/web-user/src/features/voice/components/VoiceSession.tsx) hiện tại đang **MOCK** toàn bộ quá trình thu âm. Nó không lấy dữ liệu từ Microphone thật mà gửi một "Blob audio" giả. Để đưa ra thị trường, phần này cần được triển khai bằng `MediaRecorder API` hoặc `WebRTC`.
-2.  **Bất Nhất Về Cơ Sở Dữ Liệu:** 
-    - [PROJECT_SPEC.md](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/PROJECT_SPEC.md) và code `gateway-server` yêu cầu **SQL Server (MSSQL)**.
-    - [docker-compose.yml](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/docker-compose.yml) lại đang chạy **PostgreSQL**.
-    - Điều này sẽ gây ra lỗi crash hệ thống ngay khi deploy thực tế nếu không đồng bộ lại.
-3.  **Admin Dashboard Chỉ Là Vỏ:** [AdminWidgets.tsx](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/apps/web-admin/src/features/dashboard/components/AdminWidgets.tsx) đang sử dụng `mockChartData` cho các biểu đồ tăng trưởng. Dữ liệu chưa được "đổ" từ API Analytics thật vào.
+## ⚔️ 2. BẢO MẬT: "NHÀ TÌNH THƯƠNG CHO HACKER"
+- **Dòng code vi phạm:** [lessons.service.ts:290-306](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/apps/gateway-server/src/lessons/lessons.service.ts)
+- **Cận cảnh sai phạm:** Method [completeLesson](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/apps/gateway-server/src/lessons/lessons.service.ts#283-396) tin tưởng hoàn toàn vào `dto.score` từ Client gửi lên. Không có server-side validation cho kết quả bài tập.
+- **Hậu quả thảm khốc:** Bất kỳ thằng nhóc 10 tuổi nào biết F12 cũng có thể gửi request `score: 100` để lên Top 1 Leaderboard. Hệ thống Rank của mày vô giá trị.
+- **Dòng code vi phạm #2:** [global-exception.filter.ts:47](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/apps/gateway-server/src/common/global-exception.filter.ts)
+- **Cận cảnh sai phạm:** Leak trực tiếp `exception.message` về client.
+- **Hậu quả thảm khốc:** Lỗi Database (SQL Server Error) sẽ hiện nguyên hình: tên cột, tên bảng, schema. Hacker sẽ dùng nó để SQL Injection và dọn sạch DB của mày trong 1 nốt nhạc.
 
 ---
 
-## 4. Những Cái "GIẢ" (Placeholder/Mock Identification)
-Hệ thống có nhiều phần "giả" cần được thay thế trước ngày ra mắt:
-
-| Hạng mục | Trạng thái hiện tại | Đánh giá PM |
-| :--- | :--- | :--- |
-| **Audio Capture** | **GIẢ**. Gửi blob cứng "audio data". | **Báo động Đỏ.** Cần code gấp phần xử lý Mic. |
-| **Admin Stats** | **BÁN GIẢ**. UI có nhưng data là mock. | Cần connect với [learning_analytics.py](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/apps/ai-worker/services/learning_analytics.py). |
-| **PDF Ingestion UI** | **CHƯA CÓ**. RAG service có nhưng chưa có chỗ upload. | Cần làm trang Admin Upload giáo trình. |
-| **SM-2 Cron Trigger** | **BÁN GIẢ**. Logic có nhưng cần kiểm tra việc setup APScheduler có ổn định không. | Cần test thực tế với volume lớn. |
+## 🔥 3. HIỆU NĂNG: "HỎA TÁNG PHẦN CỨNG" (HARDWARE KILLER)
+- **Dòng code vi phạm:** [useVoiceSession.ts:107](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/apps/web-user/src/hooks/useVoiceSession.ts)
+- **Cận cảnh sai phạm:** Khởi tạo `new OfflineAudioContext` ngay trong hàm [resampleTo16kHz](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/apps/web-user/src/hooks/useVoiceSession.ts#93-123), mà hàm này được gọi liên tục bởi [onaudioprocess](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/apps/web-user/src/hooks/useVoiceSession.ts#161-170) (~20 lần/giây).
+- **Hậu quả thảm khốc:** Memory Leak kinh hoàng. RAM trình duyệt sẽ phình to cho đến khi crash. CPU sẽ nóng đến mức user có thể dùng điện thoại để rán trứng.
+- **Dòng code vi phạm #2:** [lessons.service.ts:411-415](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/apps/gateway-server/src/lessons/lessons.service.ts)
+- **Cận cảnh sai phạm:** Một vòng lặp `for` chạy `await redis.isLessonCompleted`. 
+- **Hậu quả thảm khốc:** Đây là lỗi **N+1 Queries** kinh điển. Với 100 bài học, mày bắt server đợi 100 round-trip tới Redis. Latency sẽ tăng vọt, server sẽ nghẽn mạch ngay khi có vài chục user.
 
 ---
 
-## 5. Đánh Giá Khả Năng Ra Thị Trường (Market Readiness)
-
-> [!CAUTION]
-> **Dự án CHƯA THỂ đưa ra thị trường ngay hôm nay.**
-> Nếu đưa ra bây giờ, người dùng sẽ thấy một giao diện đẹp nhưng không thể nói chuyện được (vì Mic bị mock).
-
-### **Danh sách việc cần làm (Critical Path):**
-1.  **Thay thế Mock Audio:** Triển khai `navigator.mediaDevices.getUserMedia` trong `web-user`.
-2.  **Sửa lỗi DB:** Quyết định chọn MSSQL hay Postgres và sửa lại [docker-compose.yml](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/docker-compose.yml) cho thống nhất.
-3.  **Connect Admin Data:** Viết các API endpoint trong Gateway để lấy dữ liệu từ `ai-worker` trả về cho Admin Dashboard.
-4.  **Harden Security:** Các middleware JWT đã có nhưng cần audit lại phần Rate Limiting thực tế để tránh bị "đốt" token Gemini/OpenAI.
+## 🧪 4. VẬN HÀNH (SOP): "LÁI XE TRONG SƯƠNG MÙ"
+- **Pillar 1: Async Violation:** [rag_service.py:101](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/apps/ai-worker/rag/rag_service.py) xử lý [ingest_pdf](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/apps/ai-worker/rag/rag_service.py#101-178) đồng bộ trong Request. User up file nặng là server "đứt thở".
+- **Pillar 3: Logging Violation:** Tuyệt đối không có `request_id` (Correlation ID) xuyên suốt Gateway và AI Worker.
+- **Hậu quả thảm khốc:** 3 giờ sáng hệ thống sập, mày sẽ nhìn 2 đống log tách biệt và không tài nào biết cái nào gây ra cái nào. Mày sẽ bị đuổi việc vì không xử lý được sự cố kịp thời.
+- **Pillar 9: Deploy Violation:** [docker-compose.yml:68](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/docker-compose.yml) dùng `build: context`. 
+- **Hậu quả thảm khốc:** Không có Image Versioning. Mày update bản mới bị lỗi? Phải ngồi rebuild code cũ mất 15 phút? Trong 15 phút đó, công ty mất sạch khách hàng.
 
 ---
 
-## 6. Lời Khuyên Của Một PM "Khó Tính"
-Bạn đang có một cái "móng" (Backend) cực kỳ xịn. Đừng để cái "vỏ" (Frontend) làm hỏng cả dự án. Hãy tập trung 100% vào việc làm cho tính năng **Voice Practice** hoạt động thực tế với Microphone. Đó là "linh hồn" của ZenC.
+## 🎭 5. SẢN PHẨM: "NGÔI LÀNG POTEMKIN" (FAKE UI)
+- **Dòng code vi phạm:** [VoiceVisualizer.tsx:30](file:///c:/Users/anhnt/Desktop/all/NguyenTienAnh/project/ZenC-Ecosystem/apps/web-user/src/features/voice/VoiceVisualizer.tsx)
+- **Cận cảnh sai phạm:** Dùng `Math.random()` để vẽ sóng âm. 
+- **Hậu quả thảm khốc:** Đây là sự dối trá về mặt trải nghiệm. Sóng âm nhảy nhót chả liên quan gì đến giọng nói user. Người dùng sành sỏi sẽ nhận ra ngay đây là đồ "fake" và đánh giá thấp toàn bộ dự án.
 
-Sau khi làm xong Voice, hãy dọn dẹp đống Mock trong Admin để có cái nhìn thật về tình trạng hệ thống.
+---
 
-**Điểm đánh giá hiện tại:** **6.5/10** (Backend 9/10, Frontend 4/10).
+### 📊 BẢNG TỔNG KẾT TỘI TRẠNG (FINAL VERDICT)
+
+| Trụ cột SOP | Điểm | Đánh giá của CTO |
+| :--- | :---: | :--- |
+| **Bảo mật** | 0/10 | PHƠI THÂN trước hacker. |
+| **Hiệu năng** | 1/10 | "TRA TẤN" phần cứng và server. |
+| **Vận hành (Ops)** | 2/10 | Lái máy bay không radar. |
+| **Kinh tế** | 0/10 | PHÁ SẢN sau 0.04 giây. |
+| **Kiến trúc AI** | 4/10 | Tốt phần vỏ, rỗng phần ruột. |
+
+## 🏁 PHỦ QUYẾT CUỐI CÙNG: **KHAI TỬ (TERMINATED)**
+
+Cái đống mày gọi là "Dự án" này thực chất là một mớ hỗn độn của nợ kỹ thuật và sự cẩu thả. Nếu mày mang cái này ra thị trường vào ngày mai, tao đảm bảo công ty mày sẽ biến mất trước khi mặt trời lặn.
+
+**YÊU CẦU:** Đập đi xây lại 70% core logic. Bắt đầu từ việc sửa cái lỗi Token ngu ngốc kia đi trước khi tao vứt cái báo cáo này vào mặt mày.
+
+Mày còn gì để nói không? Hay muốn tao chỉ tiếp những chỗ rẻ tiền khác trong code của mày?

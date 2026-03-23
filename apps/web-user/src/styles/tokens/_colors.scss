@@ -1,0 +1,35 @@
+/**
+ * Apple Human Interface Guidelines
+ * Authentic iOS System Colors
+ */
+
+:root {
+  // Apple System Blue (Primary Action)
+  --color-primary: #007AFF;
+  --color-primary-hover: #0056b3;
+  --color-primary-light: rgba(0, 122, 255, 0.1);
+  
+  // Semantic (Apple System Colors)
+  --color-success: #34C759; // iOS Green
+  --color-warning: #FF9500; // iOS Orange
+  --color-danger: #FF3B30;  // iOS Red
+
+  // iOS System Backgrounds (Light Mode)
+  --color-neutral-50: #F2F2F7;  // iOS Grouped Table Background (Pristine gray)
+  --color-neutral-100: #E5E5EA; // iOS System Gray 5 
+  --color-neutral-200: rgba(60, 60, 67, 0.18); // iOS Separator (Opaque border)
+  
+  // iOS Grays / Labels
+  --color-neutral-300: #C7C7CC;
+  --color-neutral-400: #AEAEB2;
+  --color-neutral-500: #8E8E93; // System Gray (Secondary Label)
+  --color-neutral-600: #3C3C43; // Tertiary Label
+  --color-neutral-700: rgba(60, 60, 67, 0.6); // Secondary Label
+  --color-neutral-800: #1C1C1E;
+  --color-neutral-900: #000000; // Primary Label (Pure Black)
+
+  // Structural & Materials
+  --color-surface: #FFFFFF;     // Pure White Cards
+  --color-glass-surface: rgba(255, 255, 255, 0.72); // Translucent surface for blur
+  --color-glass-overlay: rgba(242, 242, 247, 0.8);
+}

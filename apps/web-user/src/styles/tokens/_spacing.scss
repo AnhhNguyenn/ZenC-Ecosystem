@@ -1,0 +1,17 @@
+/**
+ * V14 Pragmatic SaaS Design System
+ * STRICT 8px Spacing Scale
+ * DO NOT use arbitrary values (e.g. 13px, 19px).
+ */
+
+:root {
+  --spacing-micro: 4px;
+  --spacing-xs: 8px;     // Sub-element gap
+  --spacing-sm: 12px;
+  --spacing-md: 16px;    // Component internal padding / Element gap
+  --spacing-card-pad: 20px; // Standard Card internal padding
+  --spacing-lg: 24px;    // Card gap
+  --spacing-xl: 32px;    // Section gap
+  --spacing-2xl: 48px;   // Page boundary spacing
+  --spacing-3xl: 64px;
+}

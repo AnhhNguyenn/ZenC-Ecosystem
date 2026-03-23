@@ -310,6 +310,48 @@ class RAGService:
             logger.error(f"RAG query failed: {e}")
             raise
 
+    async def list_sources(self) -> list[dict]:
+        """
+        Return a list of all unique document sources in the knowledge base.
+
+        Scrolls through all Qdrant points and aggregates by source field,
+        returning the source name and total chunk count for each document.
+
+        Returns:
+            List of dicts with: source (str), chunks (int)
+        """
+        try:
+            source_counts: dict[str, int] = {}
+            offset = None
+
+            while True:
+                # Scroll in batches of 1000 to avoid memory issues
+                results, next_offset = self.qdrant.scroll(
+                    collection_name=self.collection_name,
+                    with_payload=["source"],
+                    with_vectors=False,
+                    limit=1000,
+                    offset=offset,
+                )
+
+                for point in results:
+                    if point.payload:
+                        source = point.payload.get("source", "Unknown")
+                        source_counts[source] = source_counts.get(source, 0) + 1
+
+                if next_offset is None:
+                    break
+                offset = next_offset
+
+            return [
+                {"source": source, "chunks": count}
+                for source, count in sorted(source_counts.items())
+            ]
+
+        except Exception as e:
+            logger.error(f"RAG list_sources failed: {e}")
+            raise
+
 
 # Singleton instance
 rag_service = RAGService()

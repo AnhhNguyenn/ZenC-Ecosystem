@@ -1,53 +1,166 @@
-version: '3.8'
+# ==============================================================
+# ZenC Ecosystem – Docker Compose (Production)
+#
+# Cách dùng:
+#   docker compose up -d                  → Run all services
+#   docker compose up -d gateway-server   → Run a specific service
+#   docker compose logs -f gateway-server → Tail logs
+#
+# Prerequisites: copy .env.production to .env before running.
+# ==============================================================
 
 services:
-  # ... (Existing Services)
+
+  # ─── Infrastructure ────────────────────────────────────────────
   redis:
-    image: redis:alpine
+    image: redis:7-alpine
+    restart: always
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:-}
+      --maxmemory ${REDIS_MAXMEMORY:-256mb}
+      --maxmemory-policy ${REDIS_MAXMEMORY_POLICY:-allkeys-lru}
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  postgres:
-    image: postgres:15
+  sql-server:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    restart: always
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: zenc_db
+      SA_PASSWORD: "${MSSQL_SA_PASSWORD}"
+      ACCEPT_EULA: "Y"
+      MSSQL_DB: "${MSSQL_DATABASE:-zenc_ai}"
     ports:
-      - "5432:5432"
+      - "1433:1433"
+    volumes:
+      - mssql_data:/var/opt/mssql
+    healthcheck:
+      test: /opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P "$$SA_PASSWORD" -Q "SELECT 1" || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
 
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: always
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Backend: Gateway Server (NestJS) ────────────────────────
   gateway-server:
     build:
       context: ./apps/gateway-server
       dockerfile: Dockerfile
+    restart: always
     ports:
       - "3000:3000"
     environment:
-      - DATABASE_URL=postgres://postgres:password@postgres:5432/zenc_db
-      - REDIS_URL=redis://redis:6379
+      - NODE_ENV=production
+      - MSSQL_HOST=sql-server
+      - MSSQL_PORT=1433
+      - MSSQL_DATABASE=${MSSQL_DATABASE:-zenc_ai}
+      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+      - JWT_EXPIRATION=${JWT_EXPIRATION:-15m}
+      - JWT_REFRESH_EXPIRATION=${JWT_REFRESH_EXPIRATION:-7d}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL}
+      - GEMINI_WS_URL=${GEMINI_WS_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_REALTIME_MODEL=${OPENAI_REALTIME_MODEL:-}
+      - OPENAI_REALTIME_WS_URL=${OPENAI_REALTIME_WS_URL:-}
+      - AI_PROVIDER_PRIMARY=${AI_PROVIDER_PRIMARY:-gemini}
+      - AI_PROVIDER_FALLBACK=${AI_PROVIDER_FALLBACK:-openai}
+      - BCRYPT_SALT_ROUNDS=${BCRYPT_SALT_ROUNDS:-12}
+      - ADMIN_SECRET_KEY=${ADMIN_SECRET_KEY}
+      - TOKEN_WATCHDOG_THRESHOLD=${TOKEN_WATCHDOG_THRESHOLD:-500}
+      - GATEWAY_PORT=3000
     depends_on:
-      - postgres
-      - redis
+      sql-server:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
-  # New Frontend Services
+  # ─── Backend: AI Worker (Python/FastAPI) ─────────────────────
+  ai-worker:
+    build:
+      context: ./apps/ai-worker
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-zenc_curriculum}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_EMBEDDING_MODEL=${GEMINI_EMBEDDING_MODEL:-text-embedding-004}
+      - MSSQL_HOST=sql-server
+      - MSSQL_PORT=1433
+      - MSSQL_DATABASE=${MSSQL_DATABASE:-zenc_ai}
+      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-https://zenc.ai,https://admin.zenc.ai}
+      - WORKER_PORT=8000
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      sql-server:
+        condition: service_healthy
+
+  # ─── Frontend: Web User (Next.js) ────────────────────────────
   web-user:
     build:
       context: ./apps/web-user
       dockerfile: Dockerfile
+    restart: always
     ports:
       - "3001:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://gateway-server:3000
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://gateway-server:3000}
+      - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-http://gateway-server:3000}
     depends_on:
       - gateway-server
 
+  # ─── Frontend: Web Admin (Next.js) ───────────────────────────
   web-admin:
     build:
       context: ./apps/web-admin
       dockerfile: Dockerfile
+    restart: always
     ports:
       - "3002:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://gateway-server:3000
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://gateway-server:3000}
+      - NEXT_PUBLIC_WORKER_URL=${NEXT_PUBLIC_WORKER_URL:-http://ai-worker:8000}
     depends_on:
       - gateway-server
+      - ai-worker
+
+volumes:
+  redis_data:
+  mssql_data:
+  qdrant_storage:

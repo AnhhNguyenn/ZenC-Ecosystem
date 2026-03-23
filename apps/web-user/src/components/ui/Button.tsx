@@ -1,16 +1,15 @@
-import React from 'react';
-import { Loader2 } from 'lucide-react';
-import { clsx } from 'clsx';
-import styles from './Button.module.scss';
+import React from "react";
+import clsx from "clsx";
+import styles from "./Button.module.scss";
 
-interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger';
-  size?: 'sm' | 'md' | 'lg' | 'icon';
+export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: "primary" | "secondary" | "ghost" | "danger";
+  size?: "sm" | "md" | "lg" | "icon";
   isLoading?: boolean;
 }
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant = 'primary', size = 'md', isLoading, children, ...props }, ref) => {
+  ({ className, variant = "primary", size = "md", isLoading, children, disabled, ...props }, ref) => {
     return (
       <button
         ref={ref}
@@ -18,17 +17,15 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
           styles.button,
           styles[variant],
           styles[size],
-          isLoading && styles.loading,
           className
         )}
-        disabled={isLoading || props.disabled}
+        disabled={isLoading || disabled}
         {...props}
       >
-        {isLoading && <Loader2 className={styles.spinner} size={16} />}
-        <span className={styles.content}>{children}</span>
+        {isLoading ? "Loading..." : children}
       </button>
     );
   }
 );
 
-Button.displayName = 'Button';
+Button.displayName = "Button";

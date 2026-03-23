@@ -68,4 +68,30 @@ export class AdminController {
       data: logs,
     };
   }
+
+  /**
+   * Get platform analytics overview for the Admin Dashboard.
+   * Returns real aggregated stats: total users, active 24h, MRR, growth %.
+   */
+  @Get('analytics/overview')
+  async getAnalyticsOverview() {
+    const overview = await this.adminService.getAnalyticsOverview();
+    return {
+      statusCode: HttpStatus.OK,
+      data: overview,
+    };
+  }
+
+  /**
+   * Get weekly time-series (last 8 weeks) for the Admin Dashboard chart.
+   * Returns per-week: new users + voice sessions started.
+   */
+  @Get('analytics/weekly')
+  async getWeeklyStats() {
+    const stats = await this.adminService.getWeeklyStats();
+    return {
+      statusCode: HttpStatus.OK,
+      data: stats,
+    };
+  }
 }

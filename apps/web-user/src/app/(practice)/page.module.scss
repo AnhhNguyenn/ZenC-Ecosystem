@@ -1,0 +1,174 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-8);
+  padding: var(--spacing-6);
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.title {
+  font-size: var(--font-size-2xl);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.subtitle {
+  color: var(--text-secondary);
+  font-size: var(--font-size-lg);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--spacing-6);
+  
+  @media (max-width: 1024px) {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.practiceCard {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  
+  &:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-md);
+  }
+  
+  &.featured {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    background: linear-gradient(to right, #ffffff, #f0fdf4);
+    border: 1px solid #bbf7d0;
+    
+    @media (max-width: 768px) {
+      flex-direction: column;
+    }
+    
+    .cardBody {
+      flex: 1;
+      justify-content: center;
+    }
+    
+    .cardFooter {
+      justify-content: center;
+      padding-left: var(--spacing-8);
+      border-left: 1px solid #e5e7eb;
+      
+      @media (max-width: 768px) {
+        border-left: none;
+        padding-left: var(--spacing-6);
+        border-top: 1px solid #e5e7eb;
+      }
+    }
+  }
+}
+
+.cardHeader {
+  padding: var(--spacing-6) var(--spacing-6) 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.iconWrapper {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  
+  &.primaryIcon {
+    background-color: #dcfce7;
+    color: #16a34a;
+  }
+  
+  &.secondaryIcon {
+    background-color: #e0e7ff;
+    color: #4f46e5;
+  }
+  
+  &.tertiaryIcon {
+    background-color: #fce7f3;
+    color: #db2777;
+  }
+}
+
+.badge {
+  background-color: var(--color-primary);
+  color: white;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.cardBody {
+  padding: var(--spacing-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+  flex: 1;
+}
+
+.cardTitle {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.cardDesc {
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.features {
+  display: flex;
+  gap: var(--spacing-4);
+  margin-top: var(--spacing-2);
+  
+  span {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    color: var(--text-tertiary);
+  }
+  
+  @media (max-width: 480px) {
+    flex-direction: column;
+    gap: var(--spacing-2);
+  }
+}
+
+.cardFooter {
+  padding: 0 var(--spacing-6) var(--spacing-6);
+  display: flex;
+  flex-direction: column;
+}
+
+.startBtn {
+  width: 100%;
+}
+
+.btnIcon {
+  margin-left: var(--spacing-2);
+}

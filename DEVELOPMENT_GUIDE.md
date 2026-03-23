@@ -185,7 +185,7 @@ WORKER_PORT=8000
 
 # ── Google Gemini API ────────────────────────────────────────
 GEMINI_API_KEY=your_gemini_api_key_here
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-2.5-flash-preview-native-audio-dialog
 GEMINI_EMBEDDING_MODEL=text-embedding-004
 GEMINI_WS_URL=wss://generativelanguage.googleapis.com/ws
 

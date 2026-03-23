@@ -1,87 +1,90 @@
-.container {
+.pageContainer {
+  display: flex;
+  min-height: 100vh;
+  width: 100vw;
+  background-color: var(--color-surface); // Apple Pristine Start
+}
+
+.leftPanel {
+  flex: 1;
   display: flex;
   flex-direction: column;
+  justify-content: center;
   align-items: center;
-  gap: var(--spacing-8);
-  width: 100%;
+  padding: var(--spacing-2xl);
 }
 
-.logoWrapper {
-  animation: fadeIn 0.5s ease-out;
-}
-
-.card {
-  width: 100%;
-  border: none;
-  box-shadow: var(--shadow-xl);
+.rightPanel {
+  flex: 1.25; // Slightly wider for impact
+  background-color: var(--color-neutral-50); // Grouped gray
+  position: relative;
+  overflow: hidden;
+  display: none;
   
-  @media (min-width: 640px) {
-    border: 1px solid #e5e7eb;
+  @media (min-width: 1024px) {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: var(--spacing-2xl);
+    
+    // Abstract Apple-style soft bloom
+    &::before {
+      content: "";
+      position: absolute;
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(circle, rgba(0, 122, 255, 0.08) 0%, transparent 70%);
+      top: -200px;
+      right: -200px;
+      pointer-events: none;
+    }
   }
 }
 
-.header {
+.loginCard {
+  width: 100%;
+  max-width: 400px;
+}
+
+.brand {
+  margin-bottom: var(--spacing-xl);
   text-align: center;
-}
-
-.formContent {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-4);
-}
-
-.passwordWrapper {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-1);
-}
-
-.forgotLink {
-  font-size: var(--font-size-xs);
-  color: var(--color-primary);
-  align-self: flex-end;
-  font-weight: 500;
-  
-  &:hover {
-    text-decoration: underline;
+  h1 {
+    font-size: 42px;
+    font-weight: 700;
+    color: var(--color-neutral-900);
+    letter-spacing: -0.04em; // Apple tight kerning
   }
 }
 
-.footer {
+.formGrid {
+  display: flex;
   flex-direction: column;
-  gap: var(--spacing-4);
+  gap: var(--spacing-md);
+  margin-top: var(--spacing-md);
 }
 
 .submitButton {
+  margin-top: var(--spacing-lg);
   width: 100%;
 }
 
-.registerText {
-  font-size: var(--font-size-sm);
-  color: var(--text-tertiary);
+.marketingTitle {
+  font-size: 4rem;
+  font-weight: 700;
+  line-height: 1.05;
+  color: var(--color-neutral-900);
+  margin-bottom: var(--spacing-lg);
   text-align: center;
+  letter-spacing: -0.03em;
 }
 
-.registerLink {
-  color: var(--color-primary);
-  font-weight: 500;
-  
-  &:hover {
-    text-decoration: underline;
-  }
-}
-
-.errorAlert {
-  padding: var(--spacing-3);
-  background-color: #fef2f2; // Red 50
-  border: 1px solid #fecaca; // Red 200
-  border-radius: var(--radius-md);
-  color: var(--color-error);
-  font-size: var(--font-size-sm);
+.marketingSubtitle {
+  font-size: 1.25rem;
+  font-weight: 400;
+  color: var(--color-neutral-700);
   text-align: center;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(-10px); }
-  to { opacity: 1; transform: translateY(0); }
+  max-width: 480px;
+  line-height: 1.5;
 }

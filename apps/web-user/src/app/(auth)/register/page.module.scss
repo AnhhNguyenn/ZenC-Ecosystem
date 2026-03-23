@@ -1,11 +1,16 @@
-@import '../login/page.module.scss';
-
-// Extends/Reuses styles from login page
-// Specific overrides:
 .loginText {
-  @extend .registerText;
+  margin-top: var(--spacing-6);
+  text-align: center;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
 }
 
 .loginLink {
-  @extend .registerLink;
+  color: var(--color-primary);
+  font-weight: 500;
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
 }

@@ -10,12 +10,27 @@ import os
 import shutil
 from typing import Optional
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Security, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 from rag.rag_service import rag_service
 
 logger = logging.getLogger(__name__)
+
+# ── Lightweight Admin Auth ────────────────────────────────────────
+# The RAG ingest endpoint is admin-only. We use the ADMIN_SECRET_KEY
+# from env vars as a simple bearer token check — full JWT verification
+# runs in the Gateway; this is an internal service-level guard.
+_bearer_scheme = HTTPBearer(auto_error=True)
+_ADMIN_KEY = os.getenv("ADMIN_SECRET_KEY", "")
+
+
+def require_admin(credentials: HTTPAuthorizationCredentials = Security(_bearer_scheme)) -> None:
+    """Verify the bearer token matches ADMIN_SECRET_KEY."""
+    if not _ADMIN_KEY or credentials.credentials != _ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
 
 router = APIRouter(prefix="/rag", tags=["RAG Pipeline"])
 
@@ -42,7 +57,7 @@ class IngestResponse(BaseModel):
     source_name: str
 
 
-@router.post("/ingest", response_model=IngestResponse)
+@router.post("/ingest", response_model=IngestResponse, dependencies=[Depends(require_admin)])
 async def ingest_document(
     file: UploadFile = File(...),
     source_name: str = Form(...),
@@ -121,3 +136,38 @@ async def query_documents(request: QueryRequest) -> list[QueryResponse]:
     except Exception as e:
         logger.error(f"RAG query endpoint error: {e}")
         raise HTTPException(status_code=500, detail="Query processing failed")
+
+
+class SourceInfo(BaseModel):
+    """A single document source in the knowledge base."""
+    source: str
+    chunks: int
+
+
+class SourcesResponse(BaseModel):
+    """Response listing all ingested document sources."""
+    sources: list[SourceInfo]
+    total: int
+
+
+@router.get("/sources", response_model=SourcesResponse)
+async def list_sources() -> SourcesResponse:
+    """
+    List all unique document sources in the RAG knowledge base.
+
+    Aggregates Qdrant points by source name and returns the total
+    chunk count for each document. Used by the Admin content management
+    page to display the current state of the knowledge base.
+
+    Returns:
+        List of source names with chunk counts + total document count
+    """
+    try:
+        sources = await rag_service.list_sources()
+        return SourcesResponse(
+            sources=[SourceInfo(**s) for s in sources],
+            total=len(sources),
+        )
+    except Exception as e:
+        logger.error(f"RAG sources endpoint error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve sources")

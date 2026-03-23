@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google"; // Using Google Font for premium look
 import "@/styles/globals.scss";
+import { AuthProvider } from '@/features/auth/AuthContext';
+import { ReactQueryProvider } from '@/providers/ReactQueryProvider';
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -9,8 +11,6 @@ export const metadata: Metadata = {
   description: "Master English with real-time AI conversation practice.",
   metadataBase: new URL('https://zenc.ai'),
 };
-
-import { AuthProvider } from '@/features/auth/AuthContext';
 
 export default function RootLayout({
   children,
@@ -21,7 +21,9 @@ export default function RootLayout({
     <html lang="en">
       <body className={inter.className}>
         <AuthProvider>
-          {children}
+          <ReactQueryProvider>
+            {children}
+          </ReactQueryProvider>
         </AuthProvider>
       </body>
     </html>

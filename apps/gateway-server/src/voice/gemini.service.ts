@@ -32,7 +32,7 @@ export class GeminiService implements OnModuleDestroy {
 
   constructor(private readonly config: ConfigService) {
     this.apiKey = this.config.get<string>('GEMINI_API_KEY', '');
-    this.model = this.config.get<string>('GEMINI_MODEL', 'gemini-2.5-flash');
+    this.model = this.config.get<string>('GEMINI_MODEL', 'gemini-2.5-flash-preview-native-audio-dialog');
     this.wsUrl = this.config.get<string>(
       'GEMINI_WS_URL',
       'wss://generativelanguage.googleapis.com/ws',

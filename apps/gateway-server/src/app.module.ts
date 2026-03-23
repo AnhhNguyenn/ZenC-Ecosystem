@@ -5,6 +5,7 @@ import { AllEntities } from './entities';
 
 // ── Core Infrastructure ──────────────────────────────────────
 import { RedisModule } from './common/redis.module';
+import { BullModule } from '@nestjs/bullmq';
 
 // ── Feature Modules ──────────────────────────────────────────
 import { AuthModule } from './auth/auth.module';
@@ -60,7 +61,9 @@ import { SocialModule } from './social/social.module';
         password: config.get<string>('MSSQL_PASSWORD'),
         database: config.get<string>('MSSQL_DATABASE', 'zenc_ai'),
         entities: AllEntities,
-        synchronize: config.get<string>('NODE_ENV') !== 'production',
+        synchronize: false, // Rule: STRICTLY FALSE. Migrations must be used across all environments to prevent accidental drops.
+        migrations: ['dist/migrations/*.js'],
+        migrationsRun: config.get<string>('NODE_ENV') === 'production',
         logging: config.get<string>('NODE_ENV') === 'development',
         options: {
           encrypt: false,
@@ -79,6 +82,22 @@ import { SocialModule } from './social/social.module';
 
     // ── Infrastructure ────────────────────────────────────────
     RedisModule,
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        connection: {
+          host: config.get<string>('REDIS_HOST', 'localhost'),
+          port: config.get<number>('REDIS_PORT', 6379),
+          password: config.get<string>('REDIS_PASSWORD'),
+        },
+        defaultJobOptions: {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 1000 },
+          removeOnComplete: true,
+        },
+      }),
+    }),
 
     // ── Authentication (exported for guards) ──────────────────
     AuthModule,

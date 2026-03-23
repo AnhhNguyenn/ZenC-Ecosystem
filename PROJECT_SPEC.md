@@ -46,8 +46,8 @@
 **Technology**
 
 - FastAPI
-- Celery
-- Redis Pub/Sub
+- Celery / Reliable Message Queues (No Fire-and-Forget Pub/Sub)
+- Redis
 - Qdrant Vector Database
 
 ---
@@ -91,8 +91,8 @@
 
 ## 1.5 Event Bus – Nervous System
 
-**Redis Pub/Sub** connects Gateway and Worker asynchronously.
-Gateway must **never block** waiting for Deep Brain.
+**Reliable Message Queues (BullMQ / Celery)** connects Gateway and Worker asynchronously.
+Gateway must **never block** waiting for Deep Brain, and events must **never drop** if the Worker is offline. No Pub/Sub for critical data.
 
 ---
 
@@ -238,8 +238,8 @@ Actions: update Tier/Tokens → write AdminAuditLogs → invalidate Redis cache 
 
 ## 6.1 Asynchronous Grammar Analysis
 
-Triggered by `session_ended_event` via Redis Pub/Sub.
-Worker analyzes transcript and updates UserMistakes.
+Triggered by `session_ended_event` via Reliable Message Queue.
+Worker safely consumes the event, analyzes transcript, and updates UserMistakes. If Worker is down, the queue retains the event.
 
 ---
 
@@ -277,6 +277,7 @@ Daily Cron pushes due mistakes to Redis list `daily_review:{userId}`.
 
 # 8. Coding & Documentation Standards
 
+- Monorepo Shared Types (`packages/shared-types`) for exact TS/Backend sync.
 - Strict TypeScript (No `any`)
 - Python Pydantic Models
 - SCSS Modules for Styling (No Global CSS pollution)

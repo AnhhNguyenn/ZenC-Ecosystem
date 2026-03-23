@@ -21,16 +21,34 @@ services:
     ports:
       - "6379:6379"
 
-  postgres:
-    image: postgres:15
+  sql-server:
+    image: mcr.microsoft.com/mssql/server:2022-latest
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: zenc_db
+      SA_PASSWORD: "${MSSQL_SA_PASSWORD:-ZenC@Str0ng!Pass2026}"
+      ACCEPT_EULA: "Y"
+      MSSQL_DB: "${MSSQL_DATABASE:-zenc_ai}"
     ports:
-      - "5432:5432"
+      - "1433:1433"
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      - mssql_data:/var/opt/mssql
+    healthcheck:
+      test: /opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P "$$SA_PASSWORD" -Q "SELECT 1" || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ─── Backend: Gateway Server (NestJS) – DEV ──────────────────
   gateway-server:
@@ -44,12 +62,24 @@ services:
       - ./apps/gateway-server/nest-cli.json:/app/nest-cli.json
     environment:
       - NODE_ENV=development
-      - DATABASE_URL=postgres://postgres:password@postgres:5432/zenc_db
+      - MSSQL_HOST=sql-server
+      - MSSQL_PORT=1433
+      - MSSQL_DATABASE=${MSSQL_DATABASE:-zenc_ai}
+      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD:-ZenC@Str0ng!Pass2026}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - AI_PROVIDER_PRIMARY=${AI_PROVIDER_PRIMARY:-gemini}
     depends_on:
-      - postgres
-      - redis
+      sql-server:
+        condition: service_healthy
+      redis:
+        condition: service_started
     command: npm run start:dev
 
   # ─── Backend: Gateway Server – TEST ───────────────────────────
@@ -134,10 +164,23 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-zenc_curriculum}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_EMBEDDING_MODEL=${GEMINI_EMBEDDING_MODEL:-text-embedding-004}
+      - MSSQL_HOST=sql-server
+      - MSSQL_PORT=1433
+      - MSSQL_DATABASE=${MSSQL_DATABASE:-zenc_ai}
+      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD:-ZenC@Str0ng!Pass2026}
     depends_on:
-      - redis
+      redis:
+        condition: service_started
+      qdrant:
+        condition: service_healthy
+      sql-server:
+        condition: service_healthy
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   # ─── AI Worker – TEST ────────────────────────────────────────
@@ -153,4 +196,5 @@ services:
     profiles: [test]
 
 volumes:
-  pg_data:
+  mssql_data:
+  qdrant_storage:

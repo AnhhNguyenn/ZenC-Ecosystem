@@ -2,120 +2,86 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-md);
-  font-weight: 500;
-  transition: all var(--transition-base);
-  cursor: pointer;
-  border: 1px solid transparent;
-  outline: none;
   font-family: inherit;
-  position: relative;
-  overflow: hidden;
-
-  &:focus-visible {
-    box-shadow: 0 0 0 2px var(--bg-body), 0 0 0 4px var(--color-primary);
-  }
+  font-weight: 600; // iOS buttons are usually semibold
+  border-radius: var(--radius-md); // 12px
+  cursor: pointer;
+  transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.1s cubic-bezier(0.4, 0, 0.2, 1);
+  border: none; // iOS buttons generally don't have borders
+  outline: none;
 
   &:disabled {
     opacity: 0.5;
     cursor: not-allowed;
     pointer-events: none;
   }
+  
+  &:active:not(:disabled) {
+    opacity: 0.7;
+    transform: scale(0.96); // iOS subtle scale down on press
+  }
+  
+  &:focus-visible {
+    box-shadow: var(--focus-ring);
+  }
 }
 
-// Variants
+/* Variants */
 .primary {
-  background-color: var(--color-primary);
-  color: white;
-
-  &:hover {
+  background-color: var(--color-primary); // System Blue
+  color: #ffffff;
+  &:hover:not(:disabled) {
     background-color: var(--color-primary-hover);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-md);
-  }
-
-  &:active {
-    transform: translateY(0);
   }
 }
 
 .secondary {
-  background-color: var(--color-secondary);
-  color: white;
-
-  &:hover {
-    filter: brightness(1.1);
-    transform: translateY(-1px);
-  }
-}
-
-.outline {
-  background-color: transparent;
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-
-  &:hover {
-    background-color: rgba(79, 70, 229, 0.05); // Primary with low opacity
+  background-color: var(--color-neutral-100); // System Gray 5
+  color: var(--color-primary); // System Blue Text
+  &:hover:not(:disabled) {
+    background-color: var(--color-neutral-200);
   }
 }
 
 .ghost {
   background-color: transparent;
-  color: var(--text-secondary);
-
-  &:hover {
-    background-color: rgba(0, 0, 0, 0.05);
-    color: var(--text-primary);
+  color: var(--color-primary);
+  &:hover:not(:disabled) {
+    background-color: var(--color-primary-light);
   }
 }
 
 .danger {
-  background-color: var(--color-error);
-  color: white;
-
-  &:hover {
+  background-color: var(--color-danger);
+  color: #ffffff;
+  &:hover:not(:disabled) {
     filter: brightness(0.9);
   }
 }
 
-// Sizes
+/* Sizes */
 .sm {
-  padding: 0 var(--spacing-3);
   height: 32px;
-  font-size: var(--font-size-sm);
+  padding: 0 var(--spacing-sm);
+  font-size: var(--font-size-meta);
 }
 
 .md {
-  padding: 0 var(--spacing-4);
   height: 40px;
-  font-size: var(--font-size-sm);
+  padding: 0 var(--spacing-md);
+  font-size: var(--font-size-body);
 }
 
 .lg {
-  padding: 0 var(--spacing-8);
   height: 48px;
-  font-size: var(--font-size-base);
+  padding: 0 var(--spacing-lg);
+  font-size: var(--font-size-card-title);
 }
 
 .icon {
-  padding: 0;
   width: 40px;
   height: 40px;
-}
-
-// Loading State
-.loading {
-  .content {
-    opacity: 0;
-  }
-}
-
-.spinner {
-  position: absolute;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  padding: 0;
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
 }

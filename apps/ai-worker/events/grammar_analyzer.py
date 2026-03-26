@@ -21,6 +21,7 @@ import logging
 from typing import Optional
 
 import google.generativeai as genai
+from ai_timeout import call_blocking_with_timeout
 
 from config import settings
 
@@ -92,11 +93,13 @@ async def analyze_grammar(transcript: str) -> list[dict]:
 
         # Call Gemini for analysis
         model = genai.GenerativeModel("gemini-2.0-flash")
-        response = model.generate_content(
+        response = await call_blocking_with_timeout(
+            "Grammar analysis",
+            model.generate_content,
             prompt,
             generation_config=genai.types.GenerationConfig(
                 response_mime_type="application/json",
-                temperature=0.1,  # Low temperature for consistent analytical output
+                temperature=0.1,
             ),
         )
 

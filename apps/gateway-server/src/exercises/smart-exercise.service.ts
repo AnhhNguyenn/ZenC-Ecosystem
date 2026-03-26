@@ -221,7 +221,7 @@ export class SmartExerciseService {
   ): Promise<ExerciseResult> {
     if (payload.audioBase64) {
       const assessmentId = `pic_${userId}_${Date.now()}`;
-      await this.redis.publish(
+      await this.redis.enqueueDurableEvent(
         'pronunciation_assess',
         JSON.stringify({
           assessmentId,
@@ -259,7 +259,7 @@ export class SmartExerciseService {
     },
   ): Promise<ExerciseResult> {
     const assessmentId = `shadow_${userId}_${Date.now()}`;
-    await this.redis.publish(
+    await this.redis.enqueueDurableEvent(
       'pronunciation_assess',
       JSON.stringify({
         assessmentId,

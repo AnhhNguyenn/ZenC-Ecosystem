@@ -20,6 +20,16 @@ import { RedisService } from '../common/redis.service';
 import { User } from '../entities/user.entity';
 import { UserProfile } from '../entities/user-profile.entity';
 import { Session } from '../entities/session.entity';
+import { JwtPayload } from '../auth/auth.dto';
+
+const voiceAllowedOrigins = (
+  process.env.VOICE_ALLOWED_ORIGINS ||
+  process.env.CORS_ALLOWED_ORIGINS ||
+  'http://localhost:3001,http://localhost:3002'
+)
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 /**
  * VoiceGateway v3.0 – Dual AI Engine + Conversation Modes
@@ -42,24 +52,36 @@ import { Session } from '../entities/session.entity';
  * - TOPIC_DISCUSSION: Guided topic-based conversation
  */
 @WebSocketGateway({
-  cors: { origin: '*', credentials: true },
+  cors: { origin: voiceAllowedOrigins, credentials: true },
   namespace: '/voice',
   transports: ['websocket'],
+  pingInterval: 25000,
+  pingTimeout: 20000,
 })
 export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server!: Server;
 
   private readonly logger = new Logger(VoiceGateway.name);
+  private readonly MAX_AUDIO_CHUNK_BYTES = 64 * 1024;
+  private readonly MAX_AUDIO_EVENTS_PER_SECOND = 40;
 
   // ── Session tracking maps ─────────────────────────────────────
   private readonly jitterBuffers = new Map<string, Buffer[]>();
   private readonly JITTER_BUFFER_SIZE = 3;
   private readonly socketSessions = new Map<string, string>();
   private readonly socketUsers = new Map<string, string>();
-  private readonly sessionTranscripts = new Map<string, string>();
+  private readonly sessionTranscripts = new Map<string, string[]>();
   private readonly dbSessionIds = new Map<string, string>();
   private readonly sessionTokenCounts = new Map<string, number>();
+  private readonly sessionTokenBudgets = new Map<string, number>();
+  private readonly socketTokenVersions = new Map<string, number>();
+  private readonly socketLastAuthCheckAt = new Map<string, number>();
+  private readonly queuedConversationScores = new Set<string>();
+  private readonly socketAudioConfigs = new Map<
+    string,
+    { sampleRate: number; channels: number; bytesPerSample: number }
+  >();
 
   // ── v3.0: Dual provider + conversation mode tracking ──────────
   /** Maps socketId → current AI provider ('gemini' | 'openai') */
@@ -73,7 +95,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   /** Maps socketId → real-time correction enabled flag */
   private readonly correctionEnabled = new Map<string, boolean>();
   /** Maps socketId → user transcript accumulator (from user speech) */
-  private readonly userTranscripts = new Map<string, string>();
+  private readonly userTranscripts = new Map<string, string[]>();
+  private readonly socketAudioEventCounts = new Map<
+    string,
+    { bucket: number; count: number }
+  >();
 
   constructor(
     private readonly geminiService: GeminiService,
@@ -118,10 +144,10 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return;
       }
 
-      let payload: { sub: string; email: string; tier: string };
+      let payload: JwtPayload;
       try {
         payload = this.jwtService.verify(token, {
-          secret: this.config.get<string>('JWT_SECRET'),
+          secret: this.getJwtSecret(),
         });
       } catch {
         this.logger.warn(`Connection rejected: invalid token (${client.id})`);
@@ -131,6 +157,43 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       const userId = payload.sub;
+      const authVersion = await this.getCurrentAuthVersion(userId);
+      if (authVersion !== (payload.tokenVersion ?? 0)) {
+        this.logger.warn(`Connection rejected: revoked token (${client.id})`);
+        client.emit('error', { message: 'Token has been revoked' });
+        client.disconnect();
+        return;
+      }
+
+      const dbUser = await this.userRepo.findOne({
+        where: { id: userId, isDeleted: false },
+      });
+      if (!dbUser) {
+        this.logger.warn(`Connection rejected: user not found (${client.id})`);
+        client.emit('error', { message: 'User account not found' });
+        client.disconnect();
+        return;
+      }
+
+      if (dbUser.status !== 'ACTIVE') {
+        this.logger.warn(
+          `Connection rejected: inactive account ${dbUser.id} (${dbUser.status})`,
+        );
+        client.emit('error', { message: 'Account is not allowed to start voice sessions' });
+        client.disconnect();
+        return;
+      }
+
+      if (dbUser.tokenBalance <= 0) {
+        this.logger.warn(`Connection rejected: insufficient balance for ${dbUser.id}`);
+        client.emit('error', {
+          message: 'Token balance exhausted. Please top up before starting a session.',
+          code: 'INSUFFICIENT_TOKENS',
+        });
+        client.disconnect();
+        return;
+      }
+
       this.socketUsers.set(client.id, userId);
 
       // ── Step 2: Multi-Login Prevention ──────────────────────────
@@ -151,9 +214,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       let profile = await this.redis.getCachedUserProfile(userId);
       if (!profile) {
         const dbProfile = await this.profileRepo.findOne({ where: { userId } });
-        const dbUser = await this.userRepo.findOne({ where: { id: userId } });
-
-        if (dbProfile && dbUser) {
+        if (dbProfile) {
           profile = {
             currentLevel: dbProfile.currentLevel,
             confidenceScore: String(dbProfile.confidenceScore),
@@ -162,16 +223,21 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
           };
           await this.redis.cacheUserProfile(userId, profile);
         } else {
-          profile = {
-            currentLevel: 'A1',
-            confidenceScore: '0.5',
-            vnSupportEnabled: 'true',
-            tier: 'FREE',
-          };
+          this.logger.error(`Connection rejected: profile missing for user ${userId}`);
+          client.emit('error', { message: 'User profile is unavailable' });
+          client.disconnect();
+          return;
         }
       }
 
       // ── Step 4: Select AI Provider ──────────────────────────────
+      if (!profile) {
+        client.disconnect();
+        return;
+      }
+
+      profile.tier = dbUser.tier;
+
       const provider = this.selectProvider();
       this.socketProviders.set(client.id, provider);
 
@@ -179,9 +245,17 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const systemPrompt = this.buildAdaptivePrompt(profile, 'FREE_TALK');
       const sessionId = `${userId}_${Date.now()}`;
       this.socketSessions.set(client.id, sessionId);
-      this.sessionTranscripts.set(client.id, '');
-      this.userTranscripts.set(client.id, '');
+      this.sessionTranscripts.set(client.id, []);
+      this.userTranscripts.set(client.id, []);
       this.sessionTokenCounts.set(client.id, 0);
+      this.sessionTokenBudgets.set(client.id, dbUser.tokenBalance);
+      this.socketTokenVersions.set(client.id, payload.tokenVersion ?? 0);
+      this.socketLastAuthCheckAt.set(client.id, Date.now());
+      this.socketAudioConfigs.set(client.id, {
+        sampleRate: 16000,
+        channels: 1,
+        bytesPerSample: 2,
+      });
       this.socketModes.set(client.id, 'FREE_TALK');
       this.sessionStartTimes.set(client.id, Date.now());
       this.correctionEnabled.set(client.id, true);
@@ -315,26 +389,17 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     emitter.on('textResponse', (text: string) => {
       client.emit('ai_transcript', { text });
 
-      // Accumulate AI transcript
-      const current = this.sessionTranscripts.get(client.id) || '';
-      this.sessionTranscripts.set(client.id, `${current}\nAI: ${text}`);
+      this.appendTranscriptLine(this.sessionTranscripts, client.id, `AI: ${text}`);
 
       // Trigger real-time grammar check on user's recent text if enabled
       if (this.correctionEnabled.get(client.id)) {
-        this.triggerRealtimeGrammarCheck(client);
+        void this.triggerRealtimeGrammarCheck(client);
       }
     });
 
     emitter.on('userTranscript', (text: string) => {
-      // Accumulate user's own transcript (from OpenAI Whisper or Gemini)
-      const current = this.userTranscripts.get(client.id) || '';
-      this.userTranscripts.set(client.id, `${current}\nUser: ${text}`);
-
-      const fullTranscript = this.sessionTranscripts.get(client.id) || '';
-      this.sessionTranscripts.set(
-        client.id,
-        `${fullTranscript}\nUser: ${text}`,
-      );
+      this.appendTranscriptLine(this.userTranscripts, client.id, text);
+      this.appendTranscriptLine(this.sessionTranscripts, client.id, `User: ${text}`);
     });
 
     emitter.on('turnComplete', () => {
@@ -343,7 +408,16 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     emitter.on('fallbackToText', () => {
       // Try switching to the other provider before falling back to text
-      this.attemptProviderSwitch(client);
+      void this.attemptProviderSwitch(client).catch((error: Error) => {
+        this.logger.error(
+          `Provider switch failed for ${client.id}: ${error.message}`,
+          error.stack,
+        );
+        client.emit('error', {
+          message: 'Voice mode unavailable. Switching to text mode.',
+          code: 'VOICE_FALLBACK',
+        });
+      });
     });
 
     emitter.on('error', (error: Error) => {
@@ -440,10 +514,10 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
    * Jitter buffer (size 3) → concatenate → forward to active AI provider.
    */
   @SubscribeMessage('audio_chunk')
-  handleAudioChunk(
+  async handleAudioChunk(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: Buffer,
-  ): void {
+  ): Promise<void> {
     try {
       const sessionId = this.socketSessions.get(client.id);
       if (!sessionId) {
@@ -454,11 +528,51 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const buffer = this.jitterBuffers.get(client.id);
       if (!buffer) return;
 
-      buffer.push(Buffer.from(data));
+      const isAuthorized = await this.ensureSessionAuthorizationFresh(client);
+      if (!isAuthorized) {
+        return;
+      }
+
+      const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      if (chunk.length === 0) {
+        return;
+      }
+
+      if (chunk.length > this.MAX_AUDIO_CHUNK_BYTES) {
+        this.logger.warn(
+          `Oversized audio chunk rejected for ${client.id}: ${chunk.length} bytes`,
+        );
+        client.emit('error', {
+          message: 'Audio chunk too large',
+          code: 'PAYLOAD_TOO_LARGE',
+        });
+        client.disconnect(true);
+        return;
+      }
+
+      if (!this.allowAudioEvent(client.id)) {
+        this.logger.warn(`Audio rate limit exceeded for ${client.id}`);
+        client.emit('error', {
+          message: 'Audio rate limit exceeded',
+          code: 'RATE_LIMITED',
+        });
+        client.disconnect(true);
+        return;
+      }
+
+      buffer.push(chunk);
 
       if (buffer.length >= this.JITTER_BUFFER_SIZE) {
         const concatenated = Buffer.concat(buffer);
         this.jitterBuffers.set(client.id, []);
+
+        const audioDurationSec =
+          concatenated.length / this.getSocketAudioBytesPerSecond(client.id);
+        const estimatedTokens = Math.ceil(audioDurationSec * 25);
+        const isRateLimited = await this.trackTokenUsage(client, estimatedTokens);
+        if (isRateLimited) {
+          return;
+        }
 
         // Forward to active provider
         const provider = this.socketProviders.get(client.id);
@@ -467,12 +581,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         } else {
           this.geminiService.sendAudioChunk(sessionId, concatenated);
         }
-
-        // Audio token estimation: 16kHz * 16-bit * mono = 32000 bytes/sec
-        // Gemini charges ~25 tokens/second of audio
-        const audioDurationSec = concatenated.length / 32000;
-        const estimatedTokens = Math.ceil(audioDurationSec * 25);
-        this.trackTokenUsage(client, estimatedTokens);
       }
     } catch (error) {
       this.logger.error(
@@ -496,6 +604,33 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
    * - INTERVIEW: Mock interview with scoring
    * - TOPIC_DISCUSSION: Guided discussion on a topic
    */
+  @SubscribeMessage('audio_config')
+  handleAudioConfig(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: {
+      sampleRate?: number;
+      channels?: number;
+      bytesPerSample?: number;
+    },
+  ): void {
+    const sampleRate = Math.max(
+      8000,
+      Math.min(96000, Math.trunc(data?.sampleRate ?? 16000)),
+    );
+    const channels = Math.max(1, Math.min(2, Math.trunc(data?.channels ?? 1)));
+    const bytesPerSample = Math.max(
+      1,
+      Math.min(4, Math.trunc(data?.bytesPerSample ?? 2)),
+    );
+
+    this.socketAudioConfigs.set(client.id, {
+      sampleRate,
+      channels,
+      bytesPerSample,
+    });
+  }
+
   @SubscribeMessage('switch_mode')
   async handleSwitchMode(
     @ConnectedSocket() client: Socket,
@@ -528,13 +663,22 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this.socketModes.set(client.id, data.mode);
 
+      const scenarioId = this.sanitizePromptFragment(data.scenarioId);
+      const topicId = this.sanitizePromptFragment(data.topicId);
+
       // Rebuild system prompt for new mode
       const profile = await this.redis.getCachedUserProfile(userId);
+      const ragContext = await this.loadRagContextForMode(
+        data.mode,
+        scenarioId,
+        topicId,
+      );
       const systemPrompt = this.buildAdaptivePrompt(
         profile || { currentLevel: 'A1', confidenceScore: '0.5', vnSupportEnabled: 'true', tier: 'FREE' },
         data.mode,
-        data.scenarioId,
-        data.topicId,
+        scenarioId,
+        topicId,
+        ragContext,
       );
 
       // Send mode context to the AI
@@ -579,10 +723,17 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (!sessionId || !userId) return;
 
       const provider = this.socketProviders.get(client.id);
+      const scenarioId = this.sanitizePromptFragment(data.scenarioId, 80) || 'GENERAL';
+      const category = this.sanitizePromptFragment(data.category, 80) || 'GENERAL';
+      const difficulty = this.normalizeCefrLevel(data.difficulty, 'B1');
+      const ragContext = await this.queryRagContext(
+        `Useful English phrases, vocabulary, and teaching notes for the scenario: ${category} ${scenarioId}`,
+      );
       const scenarioPrompt = this.buildScenarioPrompt(
-        data.category,
-        data.scenarioId,
-        data.difficulty || 'B1',
+        category,
+        scenarioId,
+        difficulty,
+        ragContext,
       );
 
       if (provider === 'openai') {
@@ -592,8 +743,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       client.emit('scenario_set', {
-        scenarioId: data.scenarioId,
-        category: data.category,
+        scenarioId,
+        category,
       });
     } catch (error) {
       this.logger.error(
@@ -650,11 +801,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (enabled !== 'true') return;
 
       const userId = this.socketUsers.get(client.id);
-      const userText = this.userTranscripts.get(client.id) || '';
-
-      // Only check the last spoken sentence
-      const lines = userText.split('\n').filter((l) => l.startsWith('User: '));
-      const lastSentence = lines[lines.length - 1]?.replace('User: ', '') || '';
+      const userLines = this.userTranscripts.get(client.id) || [];
+      const lastSentence = userLines[userLines.length - 1] || '';
 
       if (lastSentence.length < 5) return;
 
@@ -681,6 +829,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             if (correction.hasMistake) {
               client.emit('grammar_correction', correction);
             }
+            await this.redis.del(correctionId);
             return;
           }
         } catch {
@@ -703,16 +852,20 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
    */
   private async requestConversationScore(client: Socket): Promise<void> {
     try {
+      if (this.queuedConversationScores.has(client.id)) {
+        return;
+      }
+
       const userId = this.socketUsers.get(client.id);
       const sessionId = this.socketSessions.get(client.id);
-      const transcript = this.sessionTranscripts.get(client.id) || '';
+      const transcript = this.getTranscriptText(this.sessionTranscripts, client.id);
       const mode = this.socketModes.get(client.id) || 'FREE_TALK';
       const startTime = this.sessionStartTimes.get(client.id) || Date.now();
       const durationMinutes = (Date.now() - startTime) / 60000;
 
       if (!userId || transcript.length < 50) return;
 
-      await this.redis.publish(
+      await this.redis.enqueueDurableEvent(
         'conversation_evaluate',
         JSON.stringify({
           userId,
@@ -723,6 +876,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
           provider: this.socketProviders.get(client.id),
         }),
       );
+      this.queuedConversationScores.add(client.id);
 
       // Update speaking minutes counter
       await this.redis.getClient().incrbyfloat(
@@ -740,17 +894,99 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   // TOKEN TRACKING
   // ═══════════════════════════════════════════════════════════════
 
+  private appendTranscriptLine(
+    target: Map<string, string[]>,
+    socketId: string,
+    line: string,
+  ): void {
+    const current = target.get(socketId) || [];
+    current.push(line);
+    target.set(socketId, current);
+  }
+
+  private getTranscriptText(
+    target: Map<string, string[]>,
+    socketId: string,
+  ): string {
+    return (target.get(socketId) || []).join('\n');
+  }
+
+  private allowAudioEvent(socketId: string): boolean {
+    const currentBucket = Math.floor(Date.now() / 1000);
+    const currentState = this.socketAudioEventCounts.get(socketId);
+
+    if (!currentState || currentState.bucket !== currentBucket) {
+      this.socketAudioEventCounts.set(socketId, {
+        bucket: currentBucket,
+        count: 1,
+      });
+      return true;
+    }
+
+    currentState.count += 1;
+    this.socketAudioEventCounts.set(socketId, currentState);
+    return currentState.count <= this.MAX_AUDIO_EVENTS_PER_SECOND;
+  }
+
+  private async getCurrentAuthVersion(userId: string): Promise<number> {
+    const raw = await this.redis.get(`auth_version:${userId}`);
+    const parsed = Number.parseInt(raw ?? '0', 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  private getJwtSecret(): string {
+    const secret = this.config.get<string>('JWT_SECRET');
+    if (!secret) {
+      throw new Error('JWT_SECRET is not configured');
+    }
+    return secret;
+  }
+
+  private async ensureSessionAuthorizationFresh(client: Socket): Promise<boolean> {
+    const now = Date.now();
+    const lastCheckedAt = this.socketLastAuthCheckAt.get(client.id) ?? 0;
+    if (now - lastCheckedAt < 10000) {
+      return true;
+    }
+
+    this.socketLastAuthCheckAt.set(client.id, now);
+
+    const userId = this.socketUsers.get(client.id);
+    if (!userId) {
+      return false;
+    }
+
+    const tokenVersion = this.socketTokenVersions.get(client.id) ?? 0;
+    const currentVersion = await this.getCurrentAuthVersion(userId);
+    if (currentVersion === tokenVersion) {
+      return true;
+    }
+
+    this.logger.warn(
+      `Disconnecting stale voice session for ${userId}: tokenVersion=${tokenVersion}, currentVersion=${currentVersion}`,
+    );
+    client.emit('error', {
+      message: 'Session authorization changed. Please reconnect.',
+      code: 'TOKEN_REVOKED',
+    });
+    await this.cleanupSession(client, 'token_revoked');
+    client.disconnect(true);
+    return false;
+  }
+
   private async trackTokenUsage(
     client: Socket,
     tokens: number,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       const userId = this.socketUsers.get(client.id);
-      if (!userId) return;
+      if (!userId) return false;
+
+      const safeTokens = Math.max(1, Math.trunc(tokens));
 
       const currentUsage = await this.redis.incrementTokenUsage(
         userId,
-        tokens,
+        safeTokens,
       );
       const threshold = this.config.get<number>(
         'TOKEN_WATCHDOG_THRESHOLD',
@@ -765,17 +1001,65 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
           message: 'Usage rate exceeded. Please wait a moment.',
           code: 'RATE_LIMITED',
         });
+        await this.cleanupSession(client, 'token_watchdog');
+        client.disconnect(true);
+        return true;
+      }
+
+      const reservationSucceeded = await this.reserveTokensForUsage(
+        userId,
+        safeTokens,
+      );
+      if (!reservationSucceeded) {
+        this.logger.warn(`Token reservation failed for user ${userId}`);
+        client.emit('error', {
+          message: 'Token balance exhausted. Please top up before continuing.',
+          code: 'INSUFFICIENT_TOKENS',
+        });
+        await this.cleanupSession(client, 'insufficient_tokens');
+        client.disconnect(true);
+        return true;
+      }
+
+      const remainingBudget = this.sessionTokenBudgets.get(client.id);
+      if (remainingBudget !== undefined) {
+        this.sessionTokenBudgets.set(
+          client.id,
+          Math.max(0, remainingBudget - safeTokens),
+        );
       }
 
       const sessionCount =
-        (this.sessionTokenCounts.get(client.id) || 0) + tokens;
+        (this.sessionTokenCounts.get(client.id) || 0) + safeTokens;
       this.sessionTokenCounts.set(client.id, sessionCount);
       client.emit('token_update', { tokensUsed: sessionCount });
+      return false;
     } catch (error) {
       this.logger.error(
         `Token tracking error: ${(error as Error).message}`,
       );
+      return false;
     }
+  }
+
+  private async reserveTokensForUsage(
+    userId: string,
+    tokens: number,
+  ): Promise<boolean> {
+    const safeTokens = Math.max(1, Math.trunc(tokens));
+    const result = await this.userRepo
+      .createQueryBuilder()
+      .update(User)
+      .set({
+        tokenBalance: () => `tokenBalance - ${safeTokens}`,
+      })
+      .where('id = :id', { id: userId })
+      .andWhere('isDeleted = :isDeleted', { isDeleted: false })
+      .andWhere('status = :status', { status: 'ACTIVE' })
+      .andWhere('tokenBalance >= :tokens', { tokens: safeTokens })
+      .execute();
+
+    return (result.affected ?? 0) > 0;
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -789,9 +1073,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const sessionId = this.socketSessions.get(client.id);
     const userId = this.socketUsers.get(client.id);
     const dbSessionId = this.dbSessionIds.get(client.id);
-    const transcript = this.sessionTranscripts.get(client.id) || '';
+    const transcript = this.getTranscriptText(this.sessionTranscripts, client.id);
     const tokensUsed = this.sessionTokenCounts.get(client.id) || 0;
     const provider = this.socketProviders.get(client.id);
+
+    await this.requestConversationScore(client);
 
     // 1. Close AI provider session
     if (sessionId) {
@@ -824,7 +1110,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     // 3. Publish session_ended for Deep Brain analysis
     if (userId && transcript.length > 0) {
       try {
-        await this.redis.publish(
+        await this.redis.enqueueDurableEvent(
           'session_ended',
           JSON.stringify({
             sessionId: dbSessionId || sessionId || 'unknown',
@@ -837,29 +1123,12 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         );
       } catch (error) {
         this.logger.error(
-          `Failed to publish session_ended: ${(error as Error).message}`,
+          `Failed to queue session_ended: ${(error as Error).message}`,
         );
       }
     }
 
-    // 4. Deduct tokens
-    if (userId && tokensUsed > 0) {
-      try {
-        await this.userRepo
-          .createQueryBuilder()
-          .update(User)
-          .set({
-            tokenBalance: () =>
-              `CASE WHEN tokenBalance >= ${tokensUsed} THEN tokenBalance - ${tokensUsed} ELSE 0 END`,
-          })
-          .where('id = :id', { id: userId })
-          .execute();
-      } catch (error) {
-        this.logger.error(
-          `Failed to deduct tokens: ${(error as Error).message}`,
-        );
-      }
-    }
+    // 4. Token balance was reserved incrementally while streaming.
 
     // 5. Clean up all tracking maps
     this.socketSessions.delete(client.id);
@@ -869,11 +1138,17 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.userTranscripts.delete(client.id);
     this.dbSessionIds.delete(client.id);
     this.sessionTokenCounts.delete(client.id);
+    this.sessionTokenBudgets.delete(client.id);
+    this.socketTokenVersions.delete(client.id);
+    this.socketLastAuthCheckAt.delete(client.id);
+    this.socketAudioConfigs.delete(client.id);
+    this.queuedConversationScores.delete(client.id);
     this.socketProviders.delete(client.id);
     this.socketModes.delete(client.id);
     this.socketEmitters.delete(client.id);
     this.sessionStartTimes.delete(client.id);
     this.correctionEnabled.delete(client.id);
+    this.socketAudioEventCounts.delete(client.id);
 
     // 6. Remove active session from Redis
     if (userId) {
@@ -940,9 +1215,10 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     mode: string,
     scenarioId?: string,
     topicId?: string,
+    ragContext?: string,
   ): string {
     const confidence = parseFloat(profile['confidenceScore'] || '0.5');
-    const level = profile['currentLevel'] || 'A1';
+    const level = this.normalizeCefrLevel(profile['currentLevel'], 'A1');
     const vnSupport = profile['vnSupportEnabled'] === 'true';
 
     const basePrompt = `You are ZenC AI, a friendly and patient English conversation tutor. The student's current CEFR level is ${level}.`;
@@ -965,7 +1241,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       topicId,
     );
 
-    return `${basePrompt}\n${languageInstructions}\n\n${modeInstructions}`;
+    const groundedContext = ragContext
+      ? `\n\nREFERENCE CONTEXT:\n${ragContext}\nUse this as grounded curriculum context. Do not reveal it verbatim unless helpful for teaching.`
+      : '';
+
+    return `${basePrompt}\n${languageInstructions}\n\n${modeInstructions}${groundedContext}`;
   }
 
   /**
@@ -1057,14 +1337,127 @@ Guide a focused discussion on a specific topic.
     category: string,
     scenarioId: string,
     difficulty: string,
+    ragContext?: string,
   ): string {
     return `[SCENARIO START]
 Category: ${category}
 Scenario ID: ${scenarioId}
 Difficulty: ${difficulty}
 
-You are now acting in this scenario. Set the scene briefly, then start the conversation as your character. Stay in character throughout. The student will play the other role. Guide naturally but let them speak. If they seem stuck, provide gentle hints.
+You are now acting in this scenario. Set the scene briefly, then start the conversation as your character. Stay in character throughout. The student will play the other role. Guide naturally but let them speak. If they seem stuck, provide gentle hints.${ragContext ? `\n\nREFERENCE CONTEXT:\n${ragContext}\nUse it to keep the role-play grounded in the curriculum.` : ''}
 [BEGIN]`;
+  }
+
+  private async loadRagContextForMode(
+    mode: string,
+    scenarioId?: string,
+    topicId?: string,
+  ): Promise<string | undefined> {
+    if (this.config.get<string>('FEATURE_RAG_ENABLED', 'true') !== 'true') {
+      return undefined;
+    }
+
+    if (mode === 'TOPIC_DISCUSSION' && topicId) {
+      return this.queryRagContext(
+        `Curriculum context, vocabulary, and teaching notes for topic: ${topicId}`,
+      );
+    }
+
+    if ((mode === 'ROLE_PLAY' || mode === 'INTERVIEW') && scenarioId) {
+      return this.queryRagContext(
+        `Curriculum context, useful phrases, and guidance for scenario: ${scenarioId}`,
+      );
+    }
+
+    return undefined;
+  }
+
+  private async queryRagContext(question: string): Promise<string | undefined> {
+    const adminSecret = this.config.get<string>('ADMIN_SECRET_KEY');
+    if (!adminSecret) {
+      return undefined;
+    }
+
+    const workerBaseUrl = this.config
+      .get<string>('AI_WORKER_BASE_URL', 'http://ai-worker:8000')
+      .replace(/\/+$/, '');
+    const timeoutMs = Number(
+      this.config.get<string>('AI_WORKER_TIMEOUT_MS', '10000'),
+    );
+
+    try {
+      const response = await fetch(`${workerBaseUrl}/api/v1/rag/query`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${adminSecret}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          question,
+          top_k: 3,
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+
+      if (!response.ok) {
+        this.logger.warn(
+          `RAG query failed: status=${response.status} question=${question}`,
+        );
+        return undefined;
+      }
+
+      const results = (await response.json()) as Array<{
+        text?: string;
+        source?: string;
+        page?: number;
+      }>;
+      const context = results
+        .filter((item) => item.text)
+        .slice(0, 3)
+        .map((item, index) => {
+          const source = item.source || 'Unknown source';
+          const page = item.page ?? 0;
+          const excerpt = item.text!.replace(/\s+/g, ' ').trim().slice(0, 400);
+          return `[${index + 1}] ${source} p.${page}: ${excerpt}`;
+        })
+        .join('\n\n');
+
+      return context || undefined;
+    } catch (error) {
+      this.logger.warn(
+        `RAG query unavailable: ${(error as Error).message}`,
+      );
+      return undefined;
+    }
+  }
+
+  private sanitizePromptFragment(
+    value?: string,
+    maxLength = 120,
+  ): string | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    const sanitized = value
+      .replace(/[^A-Za-z0-9 _-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!sanitized) {
+      return undefined;
+    }
+
+    return sanitized.slice(0, maxLength);
+  }
+
+  private normalizeCefrLevel(
+    value?: string,
+    fallback = 'A1',
+  ): string {
+    const normalized = (value || '').trim().toUpperCase();
+    const validLevels = new Set(['A1', 'A2', 'B1', 'B2', 'C1', 'C2']);
+    return validLevels.has(normalized) ? normalized : fallback;
   }
 
   private buildGreetingWithReview(
@@ -1084,5 +1477,15 @@ You are now acting in this scenario. Set the scene briefly, then start the conve
       return `Chào bạn! Chúng ta sẽ luyện tập tiếng Anh cùng nhau hôm nay. (Greet the student warmly in Vietnamese, ask what they'd like to practice, keep it at ${level} level.)`;
     }
     return `Hello! I'm your English tutor. What would you like to practice today? (Keep the greeting natural, warm, calibrated to ${level} level.)`;
+  }
+  private getSocketAudioBytesPerSecond(clientId: string): number {
+    const config = this.socketAudioConfigs.get(clientId);
+    if (!config) {
+      return 32000;
+    }
+
+    const bytesPerSecond =
+      config.sampleRate * config.channels * config.bytesPerSample;
+    return Math.max(32000, bytesPerSecond);
   }
 }

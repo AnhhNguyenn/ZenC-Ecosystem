@@ -1,28 +1,31 @@
 import * as Sentry from '@sentry/nestjs';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
 
-/**
- * Initialize Sentry error monitoring for the Gateway Server.
- *
- * Call this function at the very beginning of main.ts, before
- * NestFactory.create(). This ensures all errors are captured,
- * including those during bootstrap.
- *
- * @see https://docs.sentry.io/platforms/javascript/guides/nestjs/
- */
-export function initSentry(): void {
-  const dsn = process.env.SENTRY_DSN;
+let sentryInitialized = false;
 
-  if (!dsn) {
-    console.warn('[Sentry] SENTRY_DSN not set – error tracking disabled');
+export function initSentry(options?: {
+  dsn?: string;
+  environment?: string;
+}): void {
+  if (sentryInitialized) {
     return;
   }
 
+  const dsn = options?.dsn ?? process.env.SENTRY_DSN;
+  if (!dsn) {
+    console.warn('[Sentry] SENTRY_DSN not set - error tracking disabled');
+    return;
+  }
+
+  const environment = options?.environment ?? process.env.NODE_ENV ?? 'development';
+
   Sentry.init({
     dsn,
-    environment: process.env.NODE_ENV || 'development',
-    tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.2 : 1.0,
+    environment,
+    tracesSampleRate: environment === 'production' ? 0.2 : 1.0,
     profilesSampleRate: 0.1,
     integrations: [nodeProfilingIntegration()],
   });
+
+  sentryInitialized = true;
 }

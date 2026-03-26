@@ -1,63 +1,67 @@
+import { Logger, ValidationPipe, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, VersioningType, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/global-exception.filter';
 import { initSentry } from './common/sentry.config';
 import { RedisIoAdapter } from './common/redis-io.adapter';
 
-// Initialize Sentry before anything else to capture bootstrap errors
-initSentry();
-
-/**
- * Bootstrap the ZenC AI Gateway Server.
- *
- * Configuration choices:
- * - URI versioning (/api/v1/...) per spec §13 for 90-day deprecation support.
- * - Global ValidationPipe with whitelist strips unknown properties from DTOs,
- *   preventing injection of unexpected fields.
- * - CORS enabled for development; restrict origins in production.
- */
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule);
+  const configService = app.get(ConfigService);
+  app.set('trust proxy', 1);
 
-  // ── API Versioning ──────────────────────────────────────────
+  initSentry({
+    dsn: configService.get<string>('SENTRY_DSN'),
+    environment: configService.get<string>('NODE_ENV') ?? 'development',
+  });
+
   app.setGlobalPrefix('api');
   app.enableVersioning({
     type: VersioningType.URI,
     defaultVersion: '1',
   });
 
-  // ── WebSockets Scaling (Redis Adapter) ──────────────────────
   const redisIoAdapter = new RedisIoAdapter(app);
-  await redisIoAdapter.connectToRedis(process.env.REDIS_URL || 'redis://localhost:6379');
+  const redisHost = configService.get<string>('REDIS_HOST', 'localhost');
+  const redisPort = configService.get<string>('REDIS_PORT', '6379');
+  const redisPassword = configService.get<string>('REDIS_PASSWORD', '');
+  const redisUrl = redisPassword
+    ? `redis://:${encodeURIComponent(redisPassword)}@${redisHost}:${redisPort}`
+    : `redis://${redisHost}:${redisPort}`;
+  await redisIoAdapter.connectToRedis(redisUrl);
   app.useWebSocketAdapter(redisIoAdapter);
 
-  // ── Global Pipes ────────────────────────────────────────────
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
-      transformOptions: { enableImplicitConversion: true },
+      transformOptions: { enableImplicitConversion: false },
     }),
   );
 
-  // ── Global Exception Filter ─────────────────────────────────
   app.useGlobalFilters(new GlobalExceptionFilter());
 
-  // ── CORS ────────────────────────────────────────────────────
+  const configuredOrigins = configService.get<string>(
+    'CORS_ALLOWED_ORIGINS',
+    'http://localhost:3001,http://localhost:3002',
+  );
+  const corsOrigins = configuredOrigins
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
   app.enableCors({
-    origin: process.env.NODE_ENV === 'production'
-      ? ['https://zenc.ai']
-      : true,
+    origin: corsOrigins,
     credentials: true,
   });
 
-  const port = process.env.GATEWAY_PORT || 3000;
+  const port = configService.get<string>('GATEWAY_PORT', '3000');
   await app.listen(port);
-  logger.log(`🚀 ZenC Gateway Server running on port ${port}`);
-  logger.log(`📡 Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.log(`ZenC Gateway Server running on port ${port}`);
+  logger.log(`Environment: ${configService.get<string>('NODE_ENV') ?? 'development'}`);
 }
 
 bootstrap();

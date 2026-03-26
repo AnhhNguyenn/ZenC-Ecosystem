@@ -4,10 +4,10 @@ import { RedisService } from '../common/redis.service';
 /**
  * PronunciationService – Gateway-side orchestrator for pronunciation assessment.
  *
- * Delegates actual scoring to the Python AI Worker via Redis Pub/Sub.
+ * Delegates actual scoring to the Python AI Worker via a durable Redis queue.
  * The flow is:
  * 1. Client uploads audio + reference text via REST
- * 2. Gateway publishes to Redis channel `pronunciation_assess`
+ * 2. Gateway enqueues `pronunciation_assess`
  * 3. Worker picks up, runs Gemini-powered phoneme analysis
  * 4. Worker publishes result back or stores in DB
  * 5. Gateway returns result to client (polling or WebSocket push)
@@ -42,8 +42,8 @@ export class PronunciationService {
       timestamp: new Date().toISOString(),
     });
 
-    // Publish to Worker for processing
-    await this.redis.publish('pronunciation_assess', payload);
+    // Queue durably for Worker processing
+    await this.redis.enqueueDurableEvent('pronunciation_assess', payload);
 
     // Store pending status
     const client = this.redis.getClient();

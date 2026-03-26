@@ -29,6 +29,7 @@ export class OpenAIRealtimeService implements OnModuleDestroy {
   private readonly apiKey: string;
   private readonly model: string;
   private readonly wsUrl: string;
+  private readonly connectTimeoutMs: number;
   private readonly activeSessions = new Map<string, OpenAISession>();
 
   /** Track health for provider selection */
@@ -45,6 +46,9 @@ export class OpenAIRealtimeService implements OnModuleDestroy {
     this.wsUrl = this.config.get<string>(
       'OPENAI_REALTIME_WS_URL',
       'wss://api.openai.com/v1/realtime',
+    );
+    this.connectTimeoutMs = Number(
+      this.config.get<string>('AI_PROVIDER_CONNECT_TIMEOUT_MS', '10000'),
     );
   }
 
@@ -100,6 +104,7 @@ export class OpenAIRealtimeService implements OnModuleDestroy {
       const url = `${this.wsUrl}?model=${this.model}`;
 
       const ws = new WebSocket(url, {
+        handshakeTimeout: this.connectTimeoutMs,
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
           'OpenAI-Beta': 'realtime=v1',

@@ -19,6 +19,7 @@ import time
 from datetime import datetime
 
 import google.generativeai as genai
+from ai_timeout import await_with_timeout
 
 from config import settings
 
@@ -80,13 +81,16 @@ Focus on:
 
 JSON only, no markdown:"""
 
-        response = await _model.generate_content_async(
-            prompt,
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                temperature=0.1,
-                max_output_tokens=200,
+        response = await await_with_timeout(
+            _model.generate_content_async(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    response_mime_type="application/json",
+                    temperature=0.1,
+                    max_output_tokens=200,
+                ),
             ),
+            "Real-time grammar check",
         )
 
         result = json.loads(response.text)

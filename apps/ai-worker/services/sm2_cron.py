@@ -35,6 +35,10 @@ async def run_daily_review_cron(redis_client) -> dict:
     """
     stats = {"users_processed": 0, "total_reviews_queued": 0}
 
+    if redis_client is None:
+        logger.warning("Skipping daily review cron because Redis is unavailable")
+        return stats
+
     async with async_session_factory() as session:
         # Find all unique users with mistakes due today or earlier
         today = datetime.utcnow()

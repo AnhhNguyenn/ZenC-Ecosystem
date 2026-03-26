@@ -1,25 +1,20 @@
 import {
+  BadGatewayException,
+  BadRequestException,
   Injectable,
-  NotFoundException,
+  InternalServerErrorException,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThan } from 'typeorm';
+import { MoreThan, Repository } from 'typeorm';
 import { User } from '../entities/user.entity';
 import { Session } from '../entities/session.entity';
 import { AdminAuditLog } from '../entities/admin-audit-log.entity';
 import { RedisService } from '../common/redis.service';
 import { GrantDto } from './admin.dto';
 
-/**
- * AdminService – Business logic for "God Mode" admin operations.
- *
- * Design decisions:
- * - Every mutation follows the pattern: Update SQL → Log audit → Invalidate Redis.
- * - Redis cache invalidation is performed IMMEDIATELY after the SQL update
- *   to prevent stale data from being served to active voice sessions.
- * - The change snapshot captures before/after state for full audit traceability.
- */
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
@@ -32,30 +27,15 @@ export class AdminService {
     @InjectRepository(AdminAuditLog)
     private readonly auditRepo: Repository<AdminAuditLog>,
     private readonly redis: RedisService,
+    private readonly config: ConfigService,
   ) {}
 
-  /**
-   * Grant tier upgrade, tokens, or status change to a user.
-   *
-   * Flow:
-   * 1. Load target user (fail fast if not found)
-   * 2. Capture before-state snapshot
-   * 3. Apply changes to SQL
-   * 4. Write audit log (append-only)
-   * 5. Invalidate Redis cache immediately (critical for active sessions)
-   *
-   * @param adminId - UUID of the admin performing the action
-   * @param targetUserId - UUID of the user being modified
-   * @param dto - Changes to apply + mandatory reason
-   * @returns Updated user record
-   */
   async grantToUser(
     adminId: string,
     targetUserId: string,
     dto: GrantDto,
   ): Promise<User> {
     try {
-      // ── Step 1: Load target user ────────────────────────────────
       const user = await this.userRepo.findOne({
         where: { id: targetUserId },
       });
@@ -64,14 +44,12 @@ export class AdminService {
         throw new NotFoundException(`User ${targetUserId} not found`);
       }
 
-      // ── Step 2: Capture before-state for audit ──────────────────
       const beforeState = {
         tier: user.tier,
         tokenBalance: user.tokenBalance,
         status: user.status,
       };
 
-      // ── Step 3: Apply changes ───────────────────────────────────
       const actions: string[] = [];
 
       if (dto.tier) {
@@ -90,13 +68,15 @@ export class AdminService {
       }
 
       const savedUser = await this.userRepo.save(user);
-
-      // ── Step 4: Write audit log (append-only) ───────────────────
       const afterState = {
         tier: savedUser.tier,
         tokenBalance: savedUser.tokenBalance,
         status: savedUser.status,
       };
+
+      if (dto.tier || dto.status) {
+        await this.rotateUserAuthState(savedUser.id, savedUser.status !== 'ACTIVE');
+      }
 
       const auditLog = this.auditRepo.create({
         adminId,
@@ -106,23 +86,17 @@ export class AdminService {
         changeSnapshot: JSON.stringify({ before: beforeState, after: afterState }),
       });
       await this.auditRepo.save(auditLog);
-
-      // ── Step 5: Invalidate Redis cache IMMEDIATELY ──────────────
-      /**
-       * Critical: if this user has an active voice session, the VoiceGateway
-       * will re-fetch their profile from SQL on the next cache miss.
-       * Without this invalidation, a tier downgrade wouldn't take effect
-       * until the cache TTL expires (up to 1 hour).
-       */
       await this.redis.invalidateUserCache(targetUserId);
 
       this.logger.log(
-        `God Mode: admin ${adminId} → user ${targetUserId}: ${actions.join(', ')} (reason: ${dto.reason})`,
+        `God Mode: admin ${adminId} -> user ${targetUserId}: ${actions.join(', ')} (reason: ${dto.reason})`,
       );
 
       return savedUser;
     } catch (error) {
-      if (error instanceof NotFoundException) throw error;
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
       this.logger.error(
         `God Mode grant failed: ${(error as Error).message}`,
         (error as Error).stack,
@@ -131,10 +105,6 @@ export class AdminService {
     }
   }
 
-  /**
-   * Retrieve audit logs for a target user.
-   * Used by admin dashboard for compliance review.
-   */
   async getAuditLogs(targetUserId: string): Promise<AdminAuditLog[]> {
     try {
       return await this.auditRepo.find({
@@ -148,15 +118,6 @@ export class AdminService {
     }
   }
 
-  /**
-   * Get dashboard analytics overview.
-   *
-   * Aggregates real database metrics for the Admin Dashboard:
-   * - Total registered users
-   * - Users active in the last 24h (via Sessions)
-   * - Revenue MRR estimate (PRO=9.99/mo, UNLIMITED=19.99/mo)
-   * - Month-over-Month growth percentage
-   */
   async getAnalyticsOverview(): Promise<{
     totalUsers: number;
     activeUsers24h: number;
@@ -168,10 +129,8 @@ export class AdminService {
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
 
-    // Total users
     const totalUsers = await this.userRepo.count({ where: { isDeleted: false } });
 
-    // Active users in last 24h (had a voice session)
     const activeSessions = await this.sessionRepo
       .createQueryBuilder('s')
       .select('COUNT(DISTINCT s.userId)', 'count')
@@ -179,12 +138,14 @@ export class AdminService {
       .getRawOne<{ count: string }>();
     const activeUsers24h = parseInt(activeSessions?.count ?? '0', 10);
 
-    // Revenue MRR: count PRO and UNLIMITED users
-    const proCount = await this.userRepo.count({ where: { tier: 'PRO', isDeleted: false } });
-    const unlimitedCount = await this.userRepo.count({ where: { tier: 'UNLIMITED', isDeleted: false } });
+    const proCount = await this.userRepo.count({
+      where: { tier: 'PRO', isDeleted: false },
+    });
+    const unlimitedCount = await this.userRepo.count({
+      where: { tier: 'UNLIMITED', isDeleted: false },
+    });
     const revenueMRR = Math.round(proCount * 9.99 + unlimitedCount * 19.99);
 
-    // Growth: compare new users this month vs last month
     const thisMonthUsers = await this.userRepo.count({
       where: { createdAt: MoreThan(thirtyDaysAgo), isDeleted: false },
     });
@@ -205,19 +166,9 @@ export class AdminService {
     return { totalUsers, activeUsers24h, revenueMRR, growthPercentage };
   }
 
-  /**
-   * Get weekly time-series data for the Admin Dashboard chart.
-   *
-   * Returns the last 8 weeks of:
-   * - newUsers: new user registrations per week
-   * - sessions: total voice sessions started per week
-   *
-   * Design: We compute ISO week boundaries manually to avoid DB-specific
-   * date_trunc differences between MSSQL and PostgreSQL.
-   */
   async getWeeklyStats(): Promise<
     Array<{
-      week: string;      // ISO label e.g. "2025-W12"
+      week: string;
       newUsers: number;
       sessions: number;
     }>
@@ -226,16 +177,14 @@ export class AdminService {
     const results: Array<{ week: string; newUsers: number; sessions: number }> = [];
 
     for (let i = 7; i >= 0; i--) {
-      // Week start = Monday, week end = Sunday
       const weekStart = new Date(now);
-      weekStart.setDate(now.getDate() - now.getDay() + 1 - i * 7); // Monday
+      weekStart.setDate(now.getDate() - now.getDay() + 1 - i * 7);
       weekStart.setHours(0, 0, 0, 0);
 
       const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekStart.getDate() + 6); // Sunday
+      weekEnd.setDate(weekStart.getDate() + 6);
       weekEnd.setHours(23, 59, 59, 999);
 
-      // ISO week label  e.g. "2025-W12"
       const year = weekStart.getFullYear();
       const jan1 = new Date(year, 0, 1);
       const weekNum = Math.ceil(
@@ -252,7 +201,6 @@ export class AdminService {
           })
           .andWhere('u.isDeleted = false')
           .getCount(),
-
         this.sessionRepo
           .createQueryBuilder('s')
           .where('s.startTime >= :start AND s.startTime <= :end', {
@@ -266,5 +214,135 @@ export class AdminService {
     }
 
     return results;
+  }
+
+  async listRagSources(): Promise<{
+    sources: Array<{ source: string; chunks: number }>;
+    total: number;
+  }> {
+    const response = await this.fetchWorker('/api/v1/rag/sources', {
+      method: 'GET',
+    });
+    return this.parseWorkerJson<{
+      sources: Array<{ source: string; chunks: number }>;
+      total: number;
+    }>(response, 'list RAG sources');
+  }
+
+  async ingestRagDocument(
+    file: Express.Multer.File,
+    sourceName: string,
+  ): Promise<{
+    message: string;
+    chunksIngested: number;
+    sourceName: string;
+  }> {
+    const fileName = file.originalname?.toLowerCase() ?? '';
+    const mimeType = file.mimetype?.toLowerCase() ?? '';
+
+    if (!fileName.endsWith('.pdf') && mimeType !== 'application/pdf') {
+      throw new BadRequestException('Only PDF files are supported');
+    }
+
+    const formData = new FormData();
+    formData.append(
+      'file',
+      new Blob([file.buffer], { type: file.mimetype || 'application/pdf' }),
+      file.originalname || 'document.pdf',
+    );
+    formData.append('source_name', sourceName);
+
+    const response = await this.fetchWorker('/api/v1/rag/ingest', {
+      method: 'POST',
+      body: formData,
+    });
+
+    const payload = await this.parseWorkerJson<{
+      message: string;
+      chunks_ingested: number;
+      source_name: string;
+    }>(response, 'ingest RAG document');
+
+    return {
+      message: payload.message,
+      chunksIngested: payload.chunks_ingested,
+      sourceName: payload.source_name,
+    };
+  }
+
+  private async fetchWorker(path: string, init: RequestInit): Promise<Response> {
+    const workerBaseUrl = this.getRequiredConfig(
+      'AI_WORKER_BASE_URL',
+      'http://ai-worker:8000',
+    ).replace(/\/+$/, '');
+    const adminSecret = this.getRequiredConfig('ADMIN_SECRET_KEY');
+    const timeoutMs = Number(
+      this.config.get<string>('AI_WORKER_TIMEOUT_MS', '10000'),
+    );
+
+    try {
+      return await fetch(`${workerBaseUrl}${path}`, {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${adminSecret}`,
+          ...(init.headers ?? {}),
+        },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (error) {
+      this.logger.error(
+        `Worker request failed for ${path}: ${(error as Error).message}`,
+      );
+      throw new BadGatewayException('AI Worker is unavailable');
+    }
+  }
+
+  private async parseWorkerJson<T>(
+    response: Response,
+    operation: string,
+  ): Promise<T> {
+    const rawBody = await response.text();
+    let payload: unknown = {};
+
+    if (rawBody) {
+      try {
+        payload = JSON.parse(rawBody);
+      } catch {
+        payload = { detail: rawBody };
+      }
+    }
+
+    if (!response.ok) {
+      this.logger.error(
+        `Failed to ${operation}: status=${response.status} body=${rawBody}`,
+      );
+      throw new BadGatewayException(
+        typeof payload?.detail === 'string'
+          ? payload.detail
+          : `Failed to ${operation}`,
+      );
+    }
+
+    return payload as T;
+  }
+
+  private getRequiredConfig(key: string, fallback?: string): string {
+    const value = this.config.get<string>(key, fallback ?? '');
+    if (!value) {
+      throw new InternalServerErrorException(`${key} is not configured`);
+    }
+    return value;
+  }
+
+  private async rotateUserAuthState(
+    userId: string,
+    clearRefreshToken: boolean,
+  ): Promise<void> {
+    await this.redis.getClient().incr(`auth_version:${userId}`);
+    await this.redis.removeActiveSession(userId);
+
+    if (clearRefreshToken) {
+      await this.userRepo.update(userId, { refreshTokenHash: null });
+    }
   }
 }

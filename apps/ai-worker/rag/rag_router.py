@@ -8,6 +8,7 @@ These endpoints are called by admin tools and the Gateway Server.
 import logging
 import os
 import shutil
+import tempfile
 from typing import Optional
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Security, Depends
@@ -19,9 +20,9 @@ from rag.rag_service import rag_service
 logger = logging.getLogger(__name__)
 
 # ── Lightweight Admin Auth ────────────────────────────────────────
-# The RAG ingest endpoint is admin-only. We use the ADMIN_SECRET_KEY
-# from env vars as a simple bearer token check — full JWT verification
-# runs in the Gateway; this is an internal service-level guard.
+# RAG endpoints are internal-only. We use ADMIN_SECRET_KEY from env vars
+# as a simple bearer token check; full JWT verification happens in the
+# Gateway before requests are proxied into the worker.
 _bearer_scheme = HTTPBearer(auto_error=True)
 _ADMIN_KEY = os.getenv("ADMIN_SECRET_KEY", "")
 
@@ -79,11 +80,12 @@ async def ingest_document(
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
-    temp_path = f"/tmp/rag_ingest_{file.filename}"
+    temp_path = ""
 
     try:
         # Save uploaded file temporarily for PyPDF2
-        with open(temp_path, "wb") as buffer:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as buffer:
+            temp_path = buffer.name
             shutil.copyfileobj(file.file, buffer)
 
         chunks_count = await rag_service.ingest_pdf(temp_path, source_name)
@@ -99,11 +101,15 @@ async def ingest_document(
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         # Always clean up the temp file
-        if os.path.exists(temp_path):
+        if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
 
 
-@router.post("/query", response_model=list[QueryResponse])
+@router.post(
+    "/query",
+    response_model=list[QueryResponse],
+    dependencies=[Depends(require_admin)],
+)
 async def query_documents(request: QueryRequest) -> list[QueryResponse]:
     """
     Query the RAG vector store for relevant document chunks.
@@ -150,7 +156,11 @@ class SourcesResponse(BaseModel):
     total: int
 
 
-@router.get("/sources", response_model=SourcesResponse)
+@router.get(
+    "/sources",
+    response_model=SourcesResponse,
+    dependencies=[Depends(require_admin)],
+)
 async def list_sources() -> SourcesResponse:
     """
     List all unique document sources in the RAG knowledge base.

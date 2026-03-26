@@ -1,5 +1,19 @@
 import { io, Socket } from 'socket.io-client';
 
+const resolveSocketBaseUrl = (): string => {
+  const configuredBase = process.env.NEXT_PUBLIC_WS_URL?.trim();
+  if (configuredBase) {
+    return configuredBase.replace(/\/+$/, '');
+  }
+
+  if (typeof window === 'undefined') {
+    return 'http://localhost:3000';
+  }
+
+  const { protocol, hostname } = window.location;
+  return `${protocol}//${hostname}:3000`;
+};
+
 /**
  * SocketService – Singleton managing the Socket.io connection to the
  * ZenC Gateway's /voice namespace.
@@ -30,7 +44,7 @@ class SocketService {
   public connect(token: string) {
     if (this.socket?.connected) return;
 
-    const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+    const baseUrl = resolveSocketBaseUrl();
 
     // FIX: Must connect to the /voice namespace as defined in VoiceGateway
     // @WebSocketGateway({ namespace: '/voice', transports: ['websocket'] })

@@ -41,6 +41,8 @@ export class RedisService implements OnModuleDestroy {
 
     this.client.on('connect', () => this.logger.log('Redis client connected'));
     this.client.on('error', (err) => this.logger.error('Redis client error', err));
+    this.subscriber.on('error', (err) => this.logger.error('Redis subscriber error', err));
+    this.publisher.on('error', (err) => this.logger.error('Redis publisher error', err));
   }
 
   /**
@@ -156,6 +158,21 @@ export class RedisService implements OnModuleDestroy {
       this.logger.debug(`Published to channel ${channel}`);
     } catch (error) {
       this.logger.error(`Failed to publish to channel ${channel}`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Push an event into a durable Redis queue.
+   * Combined with BRPOPLPUSH on the worker side, this keeps events
+   * available across restarts instead of dropping them like Pub/Sub.
+   */
+  async enqueueDurableEvent(eventName: string, message: string): Promise<void> {
+    try {
+      await this.client.lpush(this.getDurableQueueKey(eventName), message);
+      this.logger.debug(`Queued durable event ${eventName}`);
+    } catch (error) {
+      this.logger.error(`Failed to queue durable event ${eventName}`, error);
       throw error;
     }
   }
@@ -361,5 +378,9 @@ export class RedisService implements OnModuleDestroy {
     await this.subscriber.quit();
     await this.publisher.quit();
     this.logger.log('Redis connections closed');
+  }
+
+  private getDurableQueueKey(eventName: string): string {
+    return `durable_queue:${eventName}`;
   }
 }

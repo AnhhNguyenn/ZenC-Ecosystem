@@ -40,11 +40,15 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         message = exceptionResponse;
       } else if (typeof exceptionResponse === 'object' && exceptionResponse !== null) {
         const responseObj = exceptionResponse as Record<string, unknown>;
-        message = (responseObj['message'] as string) || message;
+        const rawMessage = responseObj['message'];
+        if (Array.isArray(rawMessage) && rawMessage.length > 0) {
+          message = String(rawMessage[0]);
+        } else if (typeof rawMessage === 'string' && rawMessage.length > 0) {
+          message = rawMessage;
+        }
         errorCode = (responseObj['error'] as string) || errorCode;
       }
     } else if (exception instanceof Error) {
-      message = exception.message;
       this.logger.error(
         `Unhandled exception: ${exception.message}`,
         exception.stack,

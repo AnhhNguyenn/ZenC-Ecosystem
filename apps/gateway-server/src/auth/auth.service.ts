@@ -7,24 +7,32 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, QueryFailedError, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+import { createHash } from 'crypto';
 import { User } from '../entities/user.entity';
 import { UserProfile } from '../entities/user-profile.entity';
 import { RedisService } from '../common/redis.service';
 import { JwtPayload, RegisterDto, LoginDto } from './auth.dto';
 
-/**
- * AuthService – Handles registration, login, and JWT refresh token rotation.
- *
- * Design decisions:
- * - Refresh token rotation: on each /refresh call, the old refresh token
- *   is invalidated and a new pair (access + refresh) is issued. This limits
- *   the blast radius of a stolen refresh token to a single use.
- * - Bcrypt for password hashing with configurable salt rounds (default 12).
- * - On registration, a default UserProfile is created atomically so that
- *   the Voice module can always assume a profile exists.
- */
+const DUMMY_PASSWORD_HASH =
+  '$2b$10$6k7bRe1f4H4q.WxqnSxTiOzjll6T6hmN6xL2dMcQ4S0QxqjEWLTFK'; // bcrypt('not-the-right-password')
+
+export interface AuthUserDto {
+  id: string;
+  email: string;
+  fullName: string;
+  role: 'LEARNER' | 'ADMIN';
+  tier: User['tier'];
+  status: User['status'];
+}
+
+export interface AuthResultDto {
+  accessToken: string;
+  refreshToken: string;
+  user: AuthUserDto;
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -35,6 +43,7 @@ export class AuthService {
     private readonly userRepo: Repository<User>,
     @InjectRepository(UserProfile)
     private readonly profileRepo: Repository<UserProfile>,
+    private readonly dataSource: DataSource,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
     private readonly redis: RedisService,
@@ -42,77 +51,90 @@ export class AuthService {
     this.saltRounds = this.config.get<number>('BCRYPT_SALT_ROUNDS', 12);
   }
 
-  /**
-   * Register a new user with email + password.
-   * Creates User + UserProfile atomically.
-   *
-   * @throws ConflictException if email already exists
-   */
-  async register(dto: RegisterDto): Promise<{ accessToken: string; refreshToken: string }> {
+  async register(dto: RegisterDto): Promise<AuthResultDto> {
+    const email = this.normalizeEmail(dto.email);
+    const passwordHash = await bcrypt.hash(
+      this.prehashPassword(dto.password),
+      this.saltRounds,
+    );
+
+    let savedUser!: User;
+
     try {
-      const existingUser = await this.userRepo.findOne({
-        where: { email: dto.email },
+      await this.dataSource.transaction(async (manager) => {
+        const userRepo = manager.getRepository(User);
+        const profileRepo = manager.getRepository(UserProfile);
+
+        const existingUser = await userRepo.findOne({
+          where: { email },
+        });
+
+        if (existingUser) {
+          throw new ConflictException('Email already registered');
+        }
+
+        const user = userRepo.create({
+          email,
+          passwordHash,
+          tier: 'FREE',
+          tokenBalance: 1000,
+          status: 'ACTIVE',
+        });
+
+        savedUser = await userRepo.save(user);
+
+        const profile = profileRepo.create({
+          userId: savedUser.id,
+          currentLevel: 'A1',
+          confidenceScore: 0.5,
+          vnSupportEnabled: true,
+          speakingSpeedMultiplier: 1.0,
+        });
+
+        await profileRepo.save(profile);
       });
 
-      if (existingUser) {
-        throw new ConflictException('Email already registered');
-      }
-
-      const passwordHash = await bcrypt.hash(dto.password, this.saltRounds);
-
-      const user = this.userRepo.create({
-        email: dto.email,
-        passwordHash,
-        tier: 'FREE',
-        tokenBalance: 1000, // Welcome bonus: 1000 tokens
-        status: 'ACTIVE',
-      });
-
-      const savedUser = await this.userRepo.save(user);
-
-      // Create default profile atomically
-      const profile = this.profileRepo.create({
-        userId: savedUser.id,
-        currentLevel: 'A1',
-        confidenceScore: 0.5,
-        vnSupportEnabled: true,
-        speakingSpeedMultiplier: 1.0,
-      });
-      await this.profileRepo.save(profile);
-
-      // Cache profile in Redis for fast access by VoiceGateway
       await this.redis.cacheUserProfile(savedUser.id, {
         currentLevel: 'A1',
         confidenceScore: '0.5',
         vnSupportEnabled: 'true',
-        tier: 'FREE',
+        tier: savedUser.tier,
       });
 
       const tokens = await this.generateTokens(savedUser);
       await this.storeRefreshToken(savedUser.id, tokens.refreshToken);
 
       this.logger.log(`User registered: ${savedUser.email}`);
-      return tokens;
+      return {
+        ...tokens,
+        user: this.toAuthUser(savedUser),
+      };
     } catch (error) {
-      if (error instanceof ConflictException) throw error;
-      this.logger.error(`Registration failed: ${(error as Error).message}`, (error as Error).stack);
+      if (error instanceof ConflictException || this.isDuplicateKeyError(error)) {
+        throw new ConflictException('Email already registered');
+      }
+
+      this.logger.error(
+        `Registration failed: ${(error as Error).message}`,
+        (error as Error).stack,
+      );
       throw error;
     }
   }
 
-  /**
-   * Authenticate user with email + password.
-   * Returns a new access + refresh token pair.
-   *
-   * @throws UnauthorizedException on invalid credentials
-   */
-  async login(dto: LoginDto): Promise<{ accessToken: string; refreshToken: string }> {
+  async login(dto: LoginDto): Promise<AuthResultDto> {
+    const email = this.normalizeEmail(dto.email);
+    const passwordInput = this.prehashPassword(dto.password);
+
     try {
       const user = await this.userRepo.findOne({
-        where: { email: dto.email, isDeleted: false },
+        where: { email, isDeleted: false },
       });
 
-      if (!user) {
+      const passwordHash = user?.passwordHash ?? DUMMY_PASSWORD_HASH;
+      const isPasswordValid = await bcrypt.compare(passwordInput, passwordHash);
+
+      if (!user || !isPasswordValid) {
         throw new UnauthorizedException('Invalid credentials');
       }
 
@@ -124,15 +146,9 @@ export class AuthService {
         throw new UnauthorizedException('Account is locked');
       }
 
-      const isPasswordValid = await bcrypt.compare(dto.password, user.passwordHash);
-      if (!isPasswordValid) {
-        throw new UnauthorizedException('Invalid credentials');
-      }
-
       const tokens = await this.generateTokens(user);
       await this.storeRefreshToken(user.id, tokens.refreshToken);
 
-      // Refresh cached profile on login
       const profile = await this.profileRepo.findOne({ where: { userId: user.id } });
       if (profile) {
         await this.redis.cacheUserProfile(user.id, {
@@ -144,26 +160,27 @@ export class AuthService {
       }
 
       this.logger.log(`User logged in: ${user.email}`);
-      return tokens;
+      return {
+        ...tokens,
+        user: this.toAuthUser(user),
+      };
     } catch (error) {
-      if (error instanceof UnauthorizedException) throw error;
-      this.logger.error(`Login failed: ${(error as Error).message}`, (error as Error).stack);
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+
+      this.logger.error(
+        `Login failed: ${(error as Error).message}`,
+        (error as Error).stack,
+      );
       throw error;
     }
   }
 
-  /**
-   * Refresh token rotation – issues a new token pair and invalidates
-   * the old refresh token.
-   *
-   * Why rotation: if a refresh token is stolen, the attacker gets only
-   * one use. On the next legitimate refresh attempt, the hash mismatch
-   * reveals the compromise and the user can be forced to re-authenticate.
-   */
-  async refreshTokens(refreshToken: string): Promise<{ accessToken: string; refreshToken: string }> {
+  async refreshTokens(refreshToken: string): Promise<AuthResultDto> {
     try {
       const payload = this.jwtService.verify<JwtPayload>(refreshToken, {
-        secret: this.config.get<string>('JWT_REFRESH_SECRET'),
+        secret: this.getRequiredConfig('JWT_REFRESH_SECRET'),
       });
 
       const user = await this.userRepo.findOne({
@@ -174,46 +191,66 @@ export class AuthService {
         throw new UnauthorizedException('Invalid refresh token');
       }
 
+      this.assertUserCanAuthenticate(user);
+
       const isRefreshValid = await bcrypt.compare(refreshToken, user.refreshTokenHash);
       if (!isRefreshValid) {
-        /**
-         * Hash mismatch indicates potential token theft.
-         * Invalidate all tokens for this user as a safety measure.
-         */
         this.logger.warn(`Refresh token reuse detected for user ${user.id}`);
-        await this.userRepo.update(user.id, { refreshTokenHash: null });
+        await this.invalidateUserSessions(user.id);
         throw new UnauthorizedException('Refresh token has been revoked');
       }
 
       const tokens = await this.generateTokens(user);
       await this.storeRefreshToken(user.id, tokens.refreshToken);
 
-      return tokens;
+      return {
+        ...tokens,
+        user: this.toAuthUser(user),
+      };
     } catch (error) {
-      if (error instanceof UnauthorizedException) throw error;
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+
       this.logger.error(`Token refresh failed: ${(error as Error).message}`);
       throw new UnauthorizedException('Invalid refresh token');
     }
   }
 
-  /**
-   * Generate access + refresh token pair.
-   * Access token is short-lived (15min), refresh token is long-lived (7d).
-   */
-  private async generateTokens(user: User): Promise<{ accessToken: string; refreshToken: string }> {
+  async logout(userId: string): Promise<void> {
+    await this.invalidateUserSessions(userId);
+  }
+
+  async getCurrentUser(userId: string): Promise<AuthUserDto> {
+    const user = await this.userRepo.findOne({
+      where: { id: userId, isDeleted: false },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    return this.toAuthUser(user);
+  }
+
+  private async generateTokens(
+    user: User,
+  ): Promise<{ accessToken: string; refreshToken: string }> {
+    const tokenVersion = await this.getTokenVersion(user.id);
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
       tier: user.tier,
+      tokenVersion,
     };
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
-        secret: this.config.get<string>('JWT_SECRET'),
+        secret: this.getRequiredConfig('JWT_SECRET'),
         expiresIn: this.config.get<string>('JWT_EXPIRATION', '15m'),
       }),
       this.jwtService.signAsync(payload, {
-        secret: this.config.get<string>('JWT_REFRESH_SECRET'),
+        secret: this.getRequiredConfig('JWT_REFRESH_SECRET'),
         expiresIn: this.config.get<string>('JWT_REFRESH_EXPIRATION', '7d'),
       }),
     ]);
@@ -221,13 +258,75 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
-  /**
-   * Hash and store the refresh token in the User table.
-   * We store the hash (not plaintext) so that a DB breach
-   * doesn't directly yield usable refresh tokens.
-   */
   private async storeRefreshToken(userId: string, refreshToken: string): Promise<void> {
     const hash = await bcrypt.hash(refreshToken, 10);
     await this.userRepo.update(userId, { refreshTokenHash: hash });
+  }
+
+  private async invalidateUserSessions(userId: string): Promise<void> {
+    await this.userRepo.update(userId, { refreshTokenHash: null });
+    await this.redis.getClient().incr(this.getTokenVersionKey(userId));
+    await this.redis.removeActiveSession(userId);
+  }
+
+  private async getTokenVersion(userId: string): Promise<number> {
+    const raw = await this.redis.get(this.getTokenVersionKey(userId));
+    const parsed = Number.parseInt(raw ?? '0', 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  private getTokenVersionKey(userId: string): string {
+    return `auth_version:${userId}`;
+  }
+
+  private normalizeEmail(email: string): string {
+    return email.trim().toLowerCase();
+  }
+
+  private assertUserCanAuthenticate(user: User): void {
+    if (user.status === 'BANNED') {
+      throw new UnauthorizedException('Account has been banned');
+    }
+
+    if (user.status === 'LOCKED') {
+      throw new UnauthorizedException('Account is locked');
+    }
+  }
+
+  private prehashPassword(password: string): string {
+    return createHash('sha256').update(password, 'utf8').digest('base64');
+  }
+
+  private toAuthUser(user: User): AuthUserDto {
+    const emailPrefix = user.email.split('@')[0] || 'ZenC User';
+    return {
+      id: user.id,
+      email: user.email,
+      fullName: emailPrefix,
+      role: 'LEARNER',
+      tier: user.tier,
+      status: user.status,
+    };
+  }
+
+  private getRequiredConfig(key: string): string {
+    const value = this.config.get<string>(key);
+    if (!value) {
+      throw new Error(`${key} is not configured`);
+    }
+    return value;
+  }
+
+  private isDuplicateKeyError(error: unknown): boolean {
+    if (!(error instanceof QueryFailedError)) {
+      return false;
+    }
+
+    const driverError = error.driverError as { number?: number; code?: string };
+    return (
+      driverError?.number === 2601 ||
+      driverError?.number === 2627 ||
+      driverError?.code === 'SQLITE_CONSTRAINT'
+    );
   }
 }

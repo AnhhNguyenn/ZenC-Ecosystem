@@ -152,6 +152,12 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
       if (ctx.state === 'suspended') await ctx.resume();
 
       const nativeSampleRate = ctx.sampleRate;
+      socketService.emit('audio_config', {
+        sampleRate: 16000,
+        channels: 1,
+        bytesPerSample: 2,
+      });
+
       const source = ctx.createMediaStreamSource(stream);
       sourceNodeRef.current = source;
 

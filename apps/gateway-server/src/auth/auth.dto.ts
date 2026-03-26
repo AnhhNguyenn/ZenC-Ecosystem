@@ -1,42 +1,43 @@
-import { IsEmail, IsString, MinLength, IsOptional } from 'class-validator';
+import { IsEmail, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 /**
- * DTOs for the Auth module – validated by NestJS global ValidationPipe.
+ * DTOs for the Auth module.
  *
- * Using class-validator decorators means the ValidationPipe will reject
- * malformed requests before they reach the service layer, reducing
- * attack surface and eliminating manual validation boilerplate.
+ * Tight length limits prevent validation and parsing from doing
+ * unnecessary work on oversized payloads.
  */
-
 export class RegisterDto {
   @IsEmail()
+  @MaxLength(255)
   email!: string;
 
-  /** Minimum 8 characters per spec §9 password policy */
   @IsString()
   @MinLength(8)
+  @MaxLength(256)
   password!: string;
 }
 
 export class LoginDto {
   @IsEmail()
+  @MaxLength(255)
   email!: string;
 
   @IsString()
+  @MaxLength(256)
   password!: string;
 }
 
 export class RefreshTokenDto {
+  @IsOptional()
   @IsString()
-  refreshToken!: string;
+  @MaxLength(4096)
+  refreshToken?: string;
 }
 
-/**
- * JWT payload shape – carried inside every access token.
- * Kept minimal to reduce token size (transmitted with every request).
- */
 export interface JwtPayload {
-  sub: string;       // userId
+  sub: string;
   email: string;
   tier: string;
+  tokenVersion: number;
+  status?: 'ACTIVE' | 'LOCKED' | 'BANNED';
 }

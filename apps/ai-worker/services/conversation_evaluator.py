@@ -21,6 +21,7 @@ import logging
 from datetime import datetime
 
 import google.generativeai as genai
+from ai_timeout import await_with_timeout
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,12 +59,15 @@ async def evaluate_conversation(
 
     try:
         prompt = _build_evaluation_prompt(transcript, mode, duration_minutes)
-        response = await _model.generate_content_async(
-            prompt,
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                temperature=0.3,
+        response = await await_with_timeout(
+            _model.generate_content_async(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    response_mime_type="application/json",
+                    temperature=0.3,
+                ),
             ),
+            "Conversation evaluation",
         )
 
         result = json.loads(response.text)

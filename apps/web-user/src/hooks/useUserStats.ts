@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import { useAuth } from '@/features/auth/AuthContext';
+import { resolveApiBaseUrl } from '@/api/axios';
 
 interface UserStats {
   streak: number;
@@ -11,7 +12,7 @@ interface UserStats {
 
 export function useUserStats() {
   const { token, user } = useAuth();
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+  const apiUrl = resolveApiBaseUrl();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['userStats', user?.id],

@@ -1,28 +1,53 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { createHash } from 'crypto';
 import * as bcrypt from 'bcrypt';
 import { AuthService } from './auth.service';
 import { User } from '../entities/user.entity';
 import { UserProfile } from '../entities/user-profile.entity';
 import { RedisService } from '../common/redis.service';
 
+const prehashPassword = (password: string): string =>
+  createHash('sha256').update(password, 'utf8').digest('base64');
+
 describe('AuthService', () => {
   let service: AuthService;
 
   const mockUserRepo = {
     findOne: jest.fn(),
-    create: jest.fn(),
-    save: jest.fn(),
     update: jest.fn(),
   };
 
   const mockProfileRepo = {
     findOne: jest.fn(),
+  };
+
+  const txUserRepo = {
+    findOne: jest.fn(),
     create: jest.fn(),
     save: jest.fn(),
+  };
+
+  const txProfileRepo = {
+    create: jest.fn(),
+    save: jest.fn(),
+  };
+
+  const mockDataSource = {
+    transaction: jest.fn(async (callback: (manager: { getRepository: (entity: unknown) => unknown }) => Promise<void>) => {
+      const manager = {
+        getRepository: (entity: unknown) => {
+          if (entity === User) return txUserRepo;
+          if (entity === UserProfile) return txProfileRepo;
+          throw new Error('Unexpected repository request');
+        },
+      };
+      return callback(manager);
+    }),
   };
 
   const mockJwtService = {
@@ -45,6 +70,11 @@ describe('AuthService', () => {
 
   const mockRedisService = {
     cacheUserProfile: jest.fn().mockResolvedValue(undefined),
+    removeActiveSession: jest.fn().mockResolvedValue(undefined),
+    get: jest.fn().mockResolvedValue(null),
+    getClient: jest.fn(() => ({
+      incr: jest.fn().mockResolvedValue(1),
+    })),
   };
 
   beforeEach(async () => {
@@ -53,6 +83,7 @@ describe('AuthService', () => {
         AuthService,
         { provide: getRepositoryToken(User), useValue: mockUserRepo },
         { provide: getRepositoryToken(UserProfile), useValue: mockProfileRepo },
+        { provide: DataSource, useValue: mockDataSource },
         { provide: JwtService, useValue: mockJwtService },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: RedisService, useValue: mockRedisService },
@@ -60,8 +91,6 @@ describe('AuthService', () => {
     }).compile();
 
     service = module.get<AuthService>(AuthService);
-
-    // Reset mocks
     jest.clearAllMocks();
   });
 
@@ -73,28 +102,30 @@ describe('AuthService', () => {
     const registerDto = { email: 'test@zenc.ai', password: 'StrongPass1!' };
 
     it('should throw ConflictException if email already exists', async () => {
-      mockUserRepo.findOne.mockResolvedValue({ id: '1', email: registerDto.email });
+      txUserRepo.findOne.mockResolvedValue({ id: '1', email: registerDto.email });
 
       await expect(service.register(registerDto)).rejects.toThrow(ConflictException);
     });
 
     it('should register a new user and return tokens', async () => {
-      mockUserRepo.findOne.mockResolvedValue(null);
-      mockUserRepo.create.mockReturnValue({ email: registerDto.email });
-      mockUserRepo.save.mockResolvedValue({
+      txUserRepo.findOne.mockResolvedValue(null);
+      txUserRepo.create.mockImplementation((value) => value);
+      txUserRepo.save.mockResolvedValue({
         id: 'uuid-1',
-        email: registerDto.email,
+        email: 'test@zenc.ai',
         tier: 'FREE',
+        status: 'ACTIVE',
       });
-      mockProfileRepo.create.mockReturnValue({});
-      mockProfileRepo.save.mockResolvedValue({});
+      txProfileRepo.create.mockImplementation((value) => value);
+      txProfileRepo.save.mockResolvedValue({});
 
       const result = await service.register(registerDto);
 
       expect(result).toHaveProperty('accessToken');
       expect(result).toHaveProperty('refreshToken');
-      expect(mockUserRepo.save).toHaveBeenCalled();
-      expect(mockProfileRepo.save).toHaveBeenCalled();
+      expect(result.user.email).toBe('test@zenc.ai');
+      expect(txUserRepo.save).toHaveBeenCalled();
+      expect(txProfileRepo.save).toHaveBeenCalled();
       expect(mockRedisService.cacheUserProfile).toHaveBeenCalled();
     });
   });
@@ -109,17 +140,19 @@ describe('AuthService', () => {
     });
 
     it('should throw UnauthorizedException if account is banned', async () => {
+      const hashedPassword = await bcrypt.hash(prehashPassword(loginDto.password), 10);
       mockUserRepo.findOne.mockResolvedValue({
         id: '1',
         email: loginDto.email,
         status: 'BANNED',
+        passwordHash: hashedPassword,
       });
 
       await expect(service.login(loginDto)).rejects.toThrow(UnauthorizedException);
     });
 
     it('should throw UnauthorizedException on wrong password', async () => {
-      const hashedPassword = await bcrypt.hash('differentPassword', 10);
+      const hashedPassword = await bcrypt.hash(prehashPassword('differentPassword'), 10);
       mockUserRepo.findOne.mockResolvedValue({
         id: '1',
         email: loginDto.email,
@@ -131,7 +164,7 @@ describe('AuthService', () => {
     });
 
     it('should return tokens on valid credentials', async () => {
-      const hashedPassword = await bcrypt.hash(loginDto.password, 10);
+      const hashedPassword = await bcrypt.hash(prehashPassword(loginDto.password), 10);
       mockUserRepo.findOne.mockResolvedValue({
         id: '1',
         email: loginDto.email,
@@ -149,6 +182,7 @@ describe('AuthService', () => {
 
       expect(result).toHaveProperty('accessToken');
       expect(result).toHaveProperty('refreshToken');
+      expect(result.user.email).toBe(loginDto.email);
     });
   });
 });

@@ -10,6 +10,7 @@ Output:
 - Generates skill radar visualization data
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta
@@ -28,6 +29,7 @@ from models import (
 )
 
 logger = logging.getLogger(__name__)
+REPORT_GENERATION_CONCURRENCY = 5
 
 
 async def generate_weekly_report(
@@ -219,8 +221,11 @@ async def generate_all_weekly_reports(redis_client) -> dict:
     """
     Batch job: generate weekly reports for all active users.
     """
-    import asyncio
     stats = {"reports_generated": 0, "errors": 0}
+
+    if redis_client is None:
+        logger.warning("Skipping weekly report generation because Redis is unavailable")
+        return stats
 
     async with async_session_factory() as session:
         # Get all active users with activity this week
@@ -233,22 +238,31 @@ async def generate_all_weekly_reports(redis_client) -> dict:
         result = await session.execute(stmt)
         active_users = [row[0] for row in result.all()]
 
-        for user_id in active_users:
-            try:
-                report = await generate_weekly_report(user_id, session)
+    semaphore = asyncio.Semaphore(REPORT_GENERATION_CONCURRENCY)
 
-                # Cache in Redis with 7-day TTL
-                await redis_client.set(
-                    f"weekly_report:{user_id}",
-                    json.dumps(report),
-                    ex=604800,
-                )
+    async def generate_and_cache(user_id: str) -> bool:
+        async with semaphore:
+            async with async_session_factory() as user_session:
+                report = await generate_weekly_report(user_id, user_session)
 
-                stats["reports_generated"] += 1
+            await redis_client.set(
+                f"weekly_report:{user_id}",
+                json.dumps(report),
+                ex=604800,
+            )
+            return True
 
-            except Exception as e:
-                logger.error(f"Failed to generate report for {user_id}: {e}")
-                stats["errors"] += 1
+    results = await asyncio.gather(
+        *(generate_and_cache(user_id) for user_id in active_users),
+        return_exceptions=True,
+    )
+
+    for user_id, result in zip(active_users, results, strict=False):
+        if isinstance(result, Exception):
+            logger.error(f"Failed to generate report for {user_id}: {result}")
+            stats["errors"] += 1
+            continue
+        stats["reports_generated"] += 1
 
     logger.info(
         f"Weekly reports: {stats['reports_generated']} generated, "
@@ -259,5 +273,4 @@ async def generate_all_weekly_reports(redis_client) -> dict:
 
 # Helper to avoid import at top level
 async def asyncio_gather(*coros):
-    import asyncio
     return await asyncio.gather(*coros)

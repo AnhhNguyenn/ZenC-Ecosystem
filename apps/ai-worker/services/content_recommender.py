@@ -19,6 +19,7 @@ import logging
 from datetime import datetime, timedelta
 
 import google.generativeai as genai
+from ai_timeout import await_with_timeout
 from sqlalchemy import select, func, case, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -91,12 +92,15 @@ async def generate_recommendations(
             skill_gaps=json.dumps(skill_gaps, indent=2),
         )
 
-        response = await model.generate_content_async(
-            prompt,
-            generation_config={
-                "temperature": 0.4,
-                "response_mime_type": "application/json",
-            },
+        response = await await_with_timeout(
+            model.generate_content_async(
+                prompt,
+                generation_config={
+                    "temperature": 0.4,
+                    "response_mime_type": "application/json",
+                },
+            ),
+            "Recommendation generation",
         )
 
         recommendations = json.loads(response.text)

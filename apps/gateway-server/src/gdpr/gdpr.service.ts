@@ -237,6 +237,7 @@ export class GdprService {
     // Remove from leaderboards
     await client.zrem('leaderboard:weekly', userId);
     await client.zrem('leaderboard:alltime', userId);
+    await client.incr(`auth_version:${userId}`);
 
     // Delete all user-specific keys
     for (const key of keysToDelete) {

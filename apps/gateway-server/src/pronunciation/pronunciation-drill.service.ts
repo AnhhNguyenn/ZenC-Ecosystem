@@ -96,7 +96,7 @@ export class PronunciationDrillService {
     // Publish to Worker for scoring if audio provided
     if (audioBase64) {
       const assessmentId = `drill_${userId}_${Date.now()}`;
-      await this.redis.publish(
+      await this.redis.enqueueDurableEvent(
         'pronunciation_assess',
         JSON.stringify({
           assessmentId,

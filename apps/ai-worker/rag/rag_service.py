@@ -19,6 +19,7 @@ Design decisions:
 
 import logging
 import uuid
+from pathlib import Path
 from typing import Optional
 
 import tiktoken
@@ -34,6 +35,7 @@ from qdrant_client.models import (
 )
 import google.generativeai as genai
 
+from ai_timeout import call_blocking_with_timeout
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,7 @@ class RAGService:
         self.qdrant = QdrantClient(
             host=settings.QDRANT_HOST,
             port=settings.QDRANT_PORT,
+            api_key=settings.QDRANT_API_KEY or None,
         )
         self.collection_name = settings.QDRANT_COLLECTION
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
@@ -80,11 +83,18 @@ class RAGService:
         but more interpretable (score range 0–1).
         """
         try:
-            collections = self.qdrant.get_collections().collections
+            collections = (
+                await call_blocking_with_timeout(
+                    "Qdrant collection discovery",
+                    self.qdrant.get_collections,
+                )
+            ).collections
             exists = any(c.name == self.collection_name for c in collections)
 
             if not exists:
-                self.qdrant.create_collection(
+                await call_blocking_with_timeout(
+                    "Qdrant collection creation",
+                    self.qdrant.create_collection,
                     collection_name=self.collection_name,
                     vectors_config=VectorParams(
                         size=self.embedding_dimension,
@@ -121,12 +131,12 @@ class RAGService:
         """
         try:
             # ── Step 1: Extract text from PDF ──────────────────────────
-            reader = PdfReader(pdf_path)
-            full_text = ""
-            for page_num, page in enumerate(reader.pages):
-                page_text = page.extract_text()
-                if page_text:
-                    full_text += f"\n[Page {page_num + 1}]\n{page_text}"
+            full_text = await call_blocking_with_timeout(
+                "PDF text extraction",
+                self._extract_pdf_text,
+                pdf_path,
+                timeout_seconds=max(settings.AI_PROVIDER_TIMEOUT_SECONDS, 30),
+            )
 
             if not full_text.strip():
                 logger.warning(f"No text extracted from PDF: {pdf_path}")
@@ -137,7 +147,7 @@ class RAGService:
             logger.info(f"PDF '{source_name}' split into {len(chunks)} chunks")
 
             # ── Step 3: Embed chunks ───────────────────────────────────
-            embeddings = self._embed_texts([chunk["text"] for chunk in chunks])
+            embeddings = await self._embed_texts([chunk["text"] for chunk in chunks])
 
             # ── Step 4: Upsert into Qdrant ─────────────────────────────
             points = [
@@ -159,7 +169,9 @@ class RAGService:
             batch_size = 100
             for i in range(0, len(points), batch_size):
                 batch = points[i : i + batch_size]
-                self.qdrant.upsert(
+                await call_blocking_with_timeout(
+                    "Qdrant upsert",
+                    self.qdrant.upsert,
                     collection_name=self.collection_name,
                     points=batch,
                 )
@@ -221,7 +233,7 @@ class RAGService:
 
         return chunks
 
-    def _embed_texts(self, texts: list[str]) -> list[list[float]]:
+    async def _embed_texts(self, texts: list[str]) -> list[list[float]]:
         """
         Generate embeddings for a list of texts using Google text-embedding-004.
 
@@ -235,7 +247,9 @@ class RAGService:
             List of 768-dim float vectors
         """
         try:
-            result = genai.embed_content(
+            result = await call_blocking_with_timeout(
+                "Embedding generation",
+                genai.embed_content,
                 model=f"models/{settings.GEMINI_EMBEDDING_MODEL}",
                 content=texts,
                 task_type="retrieval_document",
@@ -269,7 +283,9 @@ class RAGService:
         """
         try:
             # Embed the query with retrieval_query task type
-            query_result = genai.embed_content(
+            query_result = await call_blocking_with_timeout(
+                "RAG query embedding",
+                genai.embed_content,
                 model=f"models/{settings.GEMINI_EMBEDDING_MODEL}",
                 content=question,
                 task_type="retrieval_query",
@@ -289,7 +305,9 @@ class RAGService:
                 )
 
             # Search Qdrant
-            results = self.qdrant.search(
+            results = await call_blocking_with_timeout(
+                "Qdrant similarity search",
+                self.qdrant.search,
                 collection_name=self.collection_name,
                 query_vector=query_vector,
                 query_filter=search_filter,
@@ -326,7 +344,9 @@ class RAGService:
 
             while True:
                 # Scroll in batches of 1000 to avoid memory issues
-                results, next_offset = self.qdrant.scroll(
+                results, next_offset = await call_blocking_with_timeout(
+                    "Qdrant source scroll",
+                    self.qdrant.scroll,
                     collection_name=self.collection_name,
                     with_payload=["source"],
                     with_vectors=False,
@@ -351,6 +371,22 @@ class RAGService:
         except Exception as e:
             logger.error(f"RAG list_sources failed: {e}")
             raise
+
+    def _extract_pdf_text(self, pdf_path: str) -> str:
+        pdf_file = Path(pdf_path)
+        if not pdf_file.exists():
+            raise FileNotFoundError(pdf_path)
+
+        reader = PdfReader(str(pdf_file))
+        pages: list[str] = []
+
+        for page_number, page in enumerate(reader.pages, start=1):
+            page_text = (page.extract_text() or "").strip()
+            if not page_text:
+                continue
+            pages.append(f"[Page {page_number}]\n{page_text}")
+
+        return "\n\n".join(pages)
 
 
 # Singleton instance

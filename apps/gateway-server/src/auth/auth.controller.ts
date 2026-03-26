@@ -1,65 +1,146 @@
-import { Controller, Post, Body, HttpCode, HttpStatus, Version } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Req,
+  Res,
+  UnauthorizedException,
+  UseGuards,
+} from '@nestjs/common';
+import { Request, Response } from 'express';
+import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
-import { RegisterDto, LoginDto, RefreshTokenDto } from './auth.dto';
+import { JwtAuthGuard } from './jwt-auth.guard';
+import { JwtPayload, LoginDto, RefreshTokenDto, RegisterDto } from './auth.dto';
 
-/**
- * AuthController – Public endpoints for user authentication.
- *
- * All endpoints are unguarded (no JWT required) because they are
- * the entry points for obtaining tokens. The /refresh endpoint
- * validates the refresh token internally.
- *
- * Versioned under /api/v1/auth per spec §13.
- */
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly config: ConfigService,
+  ) {}
 
-  /**
-   * Register a new user account.
-   *
-   * @returns JWT access token + refresh token pair
-   */
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
-  async register(@Body() dto: RegisterDto) {
-    const tokens = await this.authService.register(dto);
+  async register(
+    @Body() dto: RegisterDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.authService.register(dto);
+    this.setRefreshTokenCookie(response, result.refreshToken);
+
     return {
       statusCode: HttpStatus.CREATED,
       message: 'Registration successful',
-      data: tokens,
+      data: result,
     };
   }
 
-  /**
-   * Login with email + password.
-   *
-   * @returns JWT access token + refresh token pair
-   */
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  async login(@Body() dto: LoginDto) {
-    const tokens = await this.authService.login(dto);
+  async login(
+    @Body() dto: LoginDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.authService.login(dto);
+    this.setRefreshTokenCookie(response, result.refreshToken);
+
     return {
       statusCode: HttpStatus.OK,
       message: 'Login successful',
-      data: tokens,
+      data: result,
     };
   }
 
-  /**
-   * Refresh token rotation.
-   * Accepts the current refresh token and returns a new pair.
-   * The old refresh token is immediately invalidated.
-   */
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  async refresh(@Body() dto: RefreshTokenDto) {
-    const tokens = await this.authService.refreshTokens(dto.refreshToken);
+  async refresh(
+    @Body() dto: RefreshTokenDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const refreshToken = dto.refreshToken || this.getRefreshTokenFromCookie(request);
+    if (!refreshToken) {
+      throw new UnauthorizedException('Refresh token is required');
+    }
+
+    const result = await this.authService.refreshTokens(refreshToken);
+    this.setRefreshTokenCookie(response, result.refreshToken);
+
     return {
       statusCode: HttpStatus.OK,
       message: 'Tokens refreshed',
-      data: tokens,
+      data: result,
     };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('me')
+  @HttpCode(HttpStatus.OK)
+  async me(@Req() request: Request & { user: JwtPayload }) {
+    const user = await this.authService.getCurrentUser(request.user.sub);
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'Current user loaded',
+      data: user,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  async logout(
+    @Req() request: Request & { user: JwtPayload },
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    await this.authService.logout(request.user.sub);
+    this.clearRefreshTokenCookie(response);
+
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'Logout successful',
+    };
+  }
+
+  private getRefreshTokenFromCookie(request: Request): string | null {
+    const cookieHeader = request.headers.cookie;
+    if (!cookieHeader) {
+      return null;
+    }
+
+    const cookies = cookieHeader.split(';').map((part) => part.trim());
+    for (const cookie of cookies) {
+      const [name, ...rest] = cookie.split('=');
+      if (name === 'refresh_token') {
+        return decodeURIComponent(rest.join('='));
+      }
+    }
+
+    return null;
+  }
+
+  private setRefreshTokenCookie(response: Response, refreshToken: string): void {
+    const isProduction = this.config.get<string>('NODE_ENV') === 'production';
+    response.cookie('refresh_token', refreshToken, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'strict' : 'lax',
+      path: '/api/v1/auth/refresh',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+  }
+
+  private clearRefreshTokenCookie(response: Response): void {
+    const isProduction = this.config.get<string>('NODE_ENV') === 'production';
+    response.cookie('refresh_token', '', {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'strict' : 'lax',
+      path: '/api/v1/auth/refresh',
+      maxAge: 0,
+    });
   }
 }

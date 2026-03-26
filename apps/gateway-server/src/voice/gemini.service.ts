@@ -23,6 +23,7 @@ export class GeminiService implements OnModuleDestroy {
   private readonly apiKey: string;
   private readonly model: string;
   private readonly wsUrl: string;
+  private readonly connectTimeoutMs: number;
   private readonly activeSessions = new Map<string, GeminiSession>();
 
   /** Health tracking for dual-provider fallback */
@@ -36,6 +37,9 @@ export class GeminiService implements OnModuleDestroy {
     this.wsUrl = this.config.get<string>(
       'GEMINI_WS_URL',
       'wss://generativelanguage.googleapis.com/ws',
+    );
+    this.connectTimeoutMs = Number(
+      this.config.get<string>('AI_PROVIDER_CONNECT_TIMEOUT_MS', '10000'),
     );
   }
 
@@ -94,7 +98,9 @@ export class GeminiService implements OnModuleDestroy {
   private connectToGemini(session: GeminiSession, systemPrompt: string): void {
     try {
       const url = `${this.wsUrl}?key=${this.apiKey}&model=${this.model}`;
-      const ws = new WebSocket(url);
+      const ws = new WebSocket(url, {
+        handshakeTimeout: this.connectTimeoutMs,
+      });
       session.ws = ws;
       const connectStart = Date.now();
 

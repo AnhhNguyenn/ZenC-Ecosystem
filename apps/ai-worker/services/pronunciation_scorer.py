@@ -28,6 +28,7 @@ import logging
 from typing import Optional
 
 import google.generativeai as genai
+from ai_timeout import await_with_timeout
 from config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -91,15 +92,18 @@ async def assess_pronunciation(
         prompt = PRONUNCIATION_PROMPT.format(reference_text=reference_text)
 
         # Send audio + prompt to Gemini for multimodal analysis
-        response = await model.generate_content_async(
-            [
-                {"mime_type": "audio/pcm", "data": audio_base64},
-                prompt,
-            ],
-            generation_config={
-                "temperature": 0.2,
-                "response_mime_type": "application/json",
-            },
+        response = await await_with_timeout(
+            model.generate_content_async(
+                [
+                    {"mime_type": "audio/pcm", "data": audio_base64},
+                    prompt,
+                ],
+                generation_config={
+                    "temperature": 0.2,
+                    "response_mime_type": "application/json",
+                },
+            ),
+            "Pronunciation assessment",
         )
 
         result = json.loads(response.text)

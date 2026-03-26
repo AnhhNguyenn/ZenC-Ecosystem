@@ -53,31 +53,42 @@ import { SocialModule } from './social/social.module';
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        type: 'mssql' as const,
-        host: config.get<string>('MSSQL_HOST', 'localhost'),
-        port: config.get<number>('MSSQL_PORT', 1433),
-        username: config.get<string>('MSSQL_USER', 'sa'),
-        password: config.get<string>('MSSQL_PASSWORD'),
-        database: config.get<string>('MSSQL_DATABASE', 'zenc_ai'),
-        entities: AllEntities,
-        synchronize: false, // Rule: STRICTLY FALSE. Migrations must be used across all environments to prevent accidental drops.
-        migrations: ['dist/migrations/*.js'],
-        migrationsRun: config.get<string>('NODE_ENV') === 'production',
-        logging: config.get<string>('NODE_ENV') === 'development',
-        options: {
-          encrypt: false,
-          trustServerCertificate: true,
-        },
-        extra: {
-          connectionTimeout: 30000,
-          requestTimeout: 30000,
-        },
-        pool: {
-          min: 2,
-          max: 20,
-        },
-      }),
+      useFactory: (config: ConfigService) => {
+        const configuredPoolMin = Number(config.get<string>('DB_POOL_MIN', '5'));
+        const configuredPoolMax = Number(config.get<string>('DB_POOL_MAX', '50'));
+        const poolMin = Number.isFinite(configuredPoolMin)
+          ? Math.max(1, configuredPoolMin)
+          : 5;
+        const poolMax = Number.isFinite(configuredPoolMax)
+          ? Math.max(poolMin, configuredPoolMax)
+          : 50;
+
+        return {
+          type: 'mssql' as const,
+          host: config.get<string>('MSSQL_HOST', 'localhost'),
+          port: config.get<number>('MSSQL_PORT', 1433),
+          username: config.get<string>('MSSQL_USER', 'sa'),
+          password: config.get<string>('MSSQL_PASSWORD'),
+          database: config.get<string>('MSSQL_DATABASE', 'zenc_ai'),
+          entities: AllEntities,
+          synchronize: false, // Rule: STRICTLY FALSE. Migrations must be used across all environments to prevent accidental drops.
+          migrations: ['dist/migrations/*.js'],
+          migrationsRun: config.get<string>('NODE_ENV') === 'production',
+          logging: config.get<string>('NODE_ENV') === 'development',
+          options: {
+            encrypt: false,
+            trustServerCertificate: true,
+          },
+          extra: {
+            connectionTimeout: 30000,
+            requestTimeout: 30000,
+          },
+          pool: {
+            min: poolMin,
+            max: poolMax,
+          },
+        };
+      },
     }),
 
     // ── Infrastructure ────────────────────────────────────────

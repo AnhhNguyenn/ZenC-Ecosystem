@@ -25,6 +25,7 @@ import logging
 from typing import Optional
 
 import google.generativeai as genai
+from ai_timeout import await_with_timeout
 from config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -101,12 +102,15 @@ async def generate_scenario(
             previous_topics=json.dumps(previous_topics or []),
         )
 
-        response = await model.generate_content_async(
-            prompt,
-            generation_config={
-                "temperature": 0.7,  # Higher creativity for scenarios
-                "response_mime_type": "application/json",
-            },
+        response = await await_with_timeout(
+            model.generate_content_async(
+                prompt,
+                generation_config={
+                    "temperature": 0.7,
+                    "response_mime_type": "application/json",
+                },
+            ),
+            "Scenario generation",
         )
 
         scenario = json.loads(response.text)

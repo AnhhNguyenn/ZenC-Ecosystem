@@ -4,7 +4,7 @@ ZenC AI Worker – Redis Pub/Sub Event Listener.
 Subscribes to Redis Pub/Sub channels and triggers corresponding
 services:
 - session_ended → grammar analysis
-- pronunciation_assess → pronunciation scoring
+- pronunciation_assess → pronunciation scoring (durable queue)
 - grammar_realtime → real-time grammar correction (< 200ms)
 - conversation_evaluate → post-session conversation scoring
 Architecture:
@@ -18,6 +18,8 @@ Architecture:
 
 Design decisions:
 - Using async redis (redis.asyncio) for non-blocking Pub/Sub subscription.
+- Durable session and conversation events are consumed from Redis lists
+  so they survive worker restarts and can be replayed after crashes.
 - Each message is processed in a try/catch to ensure a single malformed
   event doesn't crash the listener.
 - SM-2 initial interval is 1 day, easiness factor 2.5 (standard defaults).
@@ -57,6 +59,7 @@ class PubSubListener:
         connecting before the event loop is running.
         """
         self._task: asyncio.Task | None = None
+        self._durable_tasks: list[asyncio.Task] = []
         self._redis: aioredis.Redis | None = None
         self._running = False
 
@@ -64,8 +67,8 @@ class PubSubListener:
         """
         Start the background Pub/Sub listener.
 
-        Creates an async Redis connection and spawns a task that
-        subscribes to the `session_ended` channel.
+        Creates an async Redis connection and spawns both the realtime
+        Pub/Sub listener and durable queue consumers.
         """
         try:
             self._redis = aioredis.Redis(
@@ -74,9 +77,34 @@ class PubSubListener:
                 password=settings.REDIS_PASSWORD,
                 decode_responses=True,
             )
+            await self._restore_processing_queue("session_ended")
+            await self._restore_processing_queue("conversation_evaluate")
+            await self._restore_processing_queue("pronunciation_assess")
             self._running = True
             self._task = asyncio.create_task(self._listen())
-            logger.info("Pub/Sub listener started on channel: session_ended")
+            self._durable_tasks = [
+                asyncio.create_task(
+                    self._listen_durable_queue(
+                        "session_ended",
+                        self._handle_session_ended,
+                    )
+                ),
+                asyncio.create_task(
+                    self._listen_durable_queue(
+                        "conversation_evaluate",
+                        self._handle_conversation_evaluate,
+                    )
+                ),
+                asyncio.create_task(
+                    self._listen_durable_queue(
+                        "pronunciation_assess",
+                        self._handle_pronunciation,
+                    )
+                ),
+            ]
+            logger.info(
+                "Pub/Sub listener started on channels: grammar_realtime"
+            )
         except Exception as e:
             logger.error(f"Failed to start Pub/Sub listener: {e}")
             raise
@@ -86,8 +114,7 @@ class PubSubListener:
         Main listener loop – subscribes to Redis and processes events.
 
         Channels:
-        - session_ended: Triggers grammar analysis
-        - pronunciation_assess: Triggers pronunciation scoring
+        - grammar_realtime: Triggers low-latency corrections
 
         Runs indefinitely until stop() is called. Each message is
         processed independently with full error isolation.
@@ -97,10 +124,7 @@ class PubSubListener:
 
         pubsub = self._redis.pubsub()
         await pubsub.subscribe(
-            "session_ended",
-            "pronunciation_assess",
             "grammar_realtime",
-            "conversation_evaluate",
         )
 
         try:
@@ -113,14 +137,8 @@ class PubSubListener:
                 if message and message["type"] == "message":
                     channel = message.get("channel", "")
                     try:
-                        if channel == "session_ended":
-                            await self._handle_session_ended(message["data"])
-                        elif channel == "pronunciation_assess":
-                            await self._handle_pronunciation(message["data"])
-                        elif channel == "grammar_realtime":
+                        if channel == "grammar_realtime":
                             await self._handle_grammar_realtime(message["data"])
-                        elif channel == "conversation_evaluate":
-                            await self._handle_conversation_evaluate(message["data"])
                     except Exception as e:
                         logger.error(
                             f"Error processing {channel} event: {e}",
@@ -133,12 +151,78 @@ class PubSubListener:
             logger.info("Pub/Sub listener cancelled")
         finally:
             await pubsub.unsubscribe(
-                "session_ended",
-                "pronunciation_assess",
                 "grammar_realtime",
-                "conversation_evaluate",
             )
             await pubsub.close()
+
+    async def _listen_durable_queue(self, event_name: str, handler) -> None:
+        """
+        Consume durable events using BRPOPLPUSH so unfinished work can be
+        retried after worker restarts.
+        """
+        if not self._redis:
+            return
+
+        queue_key = self._queue_key(event_name)
+        processing_key = self._processing_key(event_name)
+        dead_letter_key = self._dead_letter_key(event_name)
+
+        try:
+            while self._running:
+                raw_data = await self._redis.brpoplpush(
+                    queue_key,
+                    processing_key,
+                    timeout=1,
+                )
+                if not raw_data:
+                    continue
+
+                try:
+                    await handler(raw_data)
+                    await self._redis.lrem(processing_key, 1, raw_data)
+                except Exception as e:
+                    logger.error(
+                        f"Error processing durable {event_name} event: {e}",
+                        exc_info=True,
+                    )
+                    await self._redis.lrem(processing_key, 1, raw_data)
+                    await self._redis.lpush(dead_letter_key, raw_data)
+        except asyncio.CancelledError:
+            logger.info("Durable listener cancelled for %s", event_name)
+
+    async def _restore_processing_queue(self, event_name: str) -> None:
+        """
+        Move in-flight items back to the main queue after an unclean
+        shutdown so they can be retried on startup.
+        """
+        if not self._redis:
+            return
+
+        processing_key = self._processing_key(event_name)
+        queue_key = self._queue_key(event_name)
+        restored = 0
+
+        while True:
+            raw_data = await self._redis.rpoplpush(processing_key, queue_key)
+            if raw_data is None:
+                break
+            restored += 1
+
+        if restored > 0:
+            logger.warning(
+                "Restored %s in-flight durable %s events after restart",
+                restored,
+                event_name,
+            )
+
+    def _queue_key(self, event_name: str) -> str:
+        return f"durable_queue:{event_name}"
+
+    def _processing_key(self, event_name: str) -> str:
+        return f"durable_processing:{event_name}"
+
+    def _dead_letter_key(self, event_name: str) -> str:
+        return f"durable_deadletter:{event_name}"
 
     async def _handle_session_ended(self, raw_data: str) -> None:
         """
@@ -294,6 +378,15 @@ class PubSubListener:
                 await self._task
             except asyncio.CancelledError:
                 pass
+
+        for task in self._durable_tasks:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        self._durable_tasks = []
 
         if self._redis:
             await self._redis.close()

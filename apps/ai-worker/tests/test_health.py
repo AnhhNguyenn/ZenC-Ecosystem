@@ -58,9 +58,19 @@ async def mock_lifespan(app):
 
 
 # Now patch lifespan and import main
-with patch.dict(os.environ, {"SENTRY_DSN": ""}, clear=False):
+with patch.dict(
+    os.environ,
+    {
+        "SENTRY_DSN": "",
+        "ADMIN_SECRET_KEY": "test-admin",
+    },
+    clear=False,
+):
     import main as main_module
     main_module.lifespan = mock_lifespan
+    main_module.component_status.update(
+        {"redis": True, "qdrant": True, "pubsub": True, "scheduler": True}
+    )
     # Re-create the app with the mocked lifespan
     from fastapi import FastAPI
     test_app = FastAPI(lifespan=mock_lifespan)
@@ -96,3 +106,17 @@ async def test_root_endpoint():
     assert data["service"] == "ZenC AI Worker (Deep Brain v3.0)"
     assert "RAG Pipeline" in data["modules"]
     assert "Real-Time Grammar Coach (v3.0)" in data["modules"]
+
+
+@pytest.mark.asyncio
+async def test_pronunciation_endpoint_requires_required_fields():
+    """Typed request models should reject malformed payloads with 422."""
+    transport = ASGITransport(app=test_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/pronunciation/assess",
+            json={"userId": "u-1"},
+            headers={"Authorization": "Bearer test-admin"},
+        )
+
+    assert response.status_code == 422

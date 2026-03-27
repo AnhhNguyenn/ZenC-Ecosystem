@@ -1,23 +1,28 @@
 import { Logger, ValidationPipe, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/global-exception.filter';
 import { initSentry } from './common/sentry.config';
 import { RedisIoAdapter } from './common/redis-io.adapter';
 
+// Initialize Sentry before everything else to catch bootstrap errors
+initSentry({
+  dsn: process.env.SENTRY_DSN,
+  environment: process.env.NODE_ENV ?? 'development',
+});
+
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
-  
+
+  // Security headers
+  app.use(helmet());
+
   const httpAdapter = app.getHttpAdapter().getInstance();
   httpAdapter.set('trust proxy', 1);
-
-  initSentry({
-    dsn: configService.get<string>('SENTRY_DSN'),
-    environment: configService.get<string>('NODE_ENV') ?? 'development',
-  });
 
   app.setGlobalPrefix('api');
   app.enableVersioning({

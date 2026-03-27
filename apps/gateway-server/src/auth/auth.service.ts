@@ -13,7 +13,8 @@ import { createHash } from 'crypto';
 import { User } from '../entities/user.entity';
 import { UserProfile } from '../entities/user-profile.entity';
 import { RedisService } from '../common/redis.service';
-import { JwtPayload, RegisterDto, LoginDto } from './auth.dto';
+import { RabbitMQService } from '../common/rabbitmq.service';
+import { JwtPayload, RegisterDto, LoginDto, VerifyOtpDto } from './auth.dto';
 
 const DUMMY_PASSWORD_HASH =
   '$2b$10$6k7bRe1f4H4q.WxqnSxTiOzjll6T6hmN6xL2dMcQ4S0QxqjEWLTFK'; // bcrypt('not-the-right-password')
@@ -47,21 +48,21 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
     private readonly redis: RedisService,
+    private readonly rabbitmq: RabbitMQService,
   ) {
     this.saltRounds = this.config.get<number>('BCRYPT_SALT_ROUNDS', 12);
   }
 
-  async register(dto: RegisterDto): Promise<AuthResultDto> {
+  async register(dto: RegisterDto): Promise<{ userId: string; email: string }> {
     const email = this.normalizeEmail(dto.email);
+    // Hash password outside of the database transaction
     const passwordHash = await bcrypt.hash(
       this.prehashPassword(dto.password),
       this.saltRounds,
     );
 
-    let authResult!: AuthResultDto;
-
     try {
-      await this.dataSource.transaction(async (manager) => {
+      const savedUser = await this.dataSource.transaction(async (manager) => {
         const transactionalUserRepo = manager.getRepository(User);
         const profileRepo = manager.getRepository(UserProfile);
 
@@ -73,18 +74,19 @@ export class AuthService {
           throw new ConflictException('Email already registered');
         }
 
+        // Default to UNVERIFIED and 0 tokens. Bonus is applied upon OTP verification.
         const user = transactionalUserRepo.create({
           email,
           passwordHash,
           tier: 'FREE',
-          tokenBalance: 1000,
-          status: 'ACTIVE',
+          tokenBalance: 0,
+          status: 'UNVERIFIED' as any,
         });
 
-        const savedUser = await transactionalUserRepo.save(user);
+        const dbUser = await transactionalUserRepo.save(user);
 
         const profile = profileRepo.create({
-          userId: savedUser.id,
+          userId: (dbUser as User).id,
           currentLevel: 'A1',
           confidenceScore: 0.5,
           vnSupportEnabled: true,
@@ -92,26 +94,25 @@ export class AuthService {
         });
 
         await profileRepo.save(profile);
-
-        await this.redis.cacheUserProfile(savedUser.id, {
-          currentLevel: 'A1',
-          confidenceScore: '0.5',
-          vnSupportEnabled: 'true',
-          tier: savedUser.tier,
-        });
-
-        const tokens = await this.generateTokens(savedUser);
-        const hash = await bcrypt.hash(this.prehashPassword(tokens.refreshToken), 10);
-        await transactionalUserRepo.update(savedUser.id, { refreshTokenHash: hash });
-
-        authResult = {
-          ...tokens,
-          user: this.toAuthUser(savedUser),
-        };
+        return dbUser;
       });
 
-      this.logger.log(`User registered: ${authResult.user.email}`);
-      return authResult;
+      // Generate 6-digit OTP
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      const typedUser = savedUser as User;
+      const otpKey = `auth_otp:${typedUser.id}`;
+      // Store in Redis with 5 minutes TTL
+      await this.redis.getClient().set(otpKey, otp, 'EX', 300);
+
+      // Dispatch event to RabbitMQ for sending the OTP email
+      await this.rabbitmq.dispatchDeepBrainTask('SEND_OTP_EMAIL', {
+        userId: typedUser.id,
+        email: typedUser.email,
+        otp,
+      });
+
+      this.logger.log(`User registered (UNVERIFIED): ${typedUser.email}`);
+      return { userId: typedUser.id, email: typedUser.email };
     } catch (error) {
       if (error instanceof ConflictException || this.isDuplicateKeyError(error)) {
         throw new ConflictException('Email already registered');
@@ -119,6 +120,79 @@ export class AuthService {
 
       this.logger.error(
         `Registration failed: ${(error as Error).message}`,
+        (error as Error).stack,
+      );
+      throw error;
+    }
+  }
+
+  async verifyOtp(dto: VerifyOtpDto): Promise<AuthResultDto> {
+    const email = this.normalizeEmail(dto.email);
+    const user = await this.userRepo.findOne({ where: { email } });
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    if (user.status !== 'UNVERIFIED' as any) {
+      throw new ConflictException('User is already verified');
+    }
+
+    const otpKey = `auth_otp:${user.id}`;
+    const storedOtp = await this.redis.getClient().get(otpKey);
+
+    if (!storedOtp || storedOtp !== dto.otp) {
+      throw new UnauthorizedException('Invalid or expired OTP');
+    }
+
+    let authResult!: AuthResultDto;
+
+    try {
+      // Fetch dynamic bonus config (default to 0 if not set) OUTSIDE transaction to prevent DB Lock
+      const configBonus = await this.redis.getClient().get('SYSTEM_CONFIG:WELCOME_BONUS_TOKENS');
+      const welcomeBonus = configBonus ? parseInt(configBonus, 10) : 0;
+
+      await this.dataSource.transaction(async (manager) => {
+        const transactionalUserRepo = manager.getRepository(User);
+
+        await transactionalUserRepo.update(user.id, {
+          status: 'ACTIVE',
+          tokenBalance: () => `tokenBalance + ${welcomeBonus}`,
+        });
+      });
+
+      // Delete OTP OUTSIDE transaction
+      await this.redis.getClient().del(otpKey);
+
+      // Reload user to get updated state for tokens
+      const activeUser = await this.userRepo.findOneOrFail({ where: { id: user.id } });
+
+      // Caching profile
+      const profile = await this.profileRepo.findOne({ where: { userId: activeUser.id } });
+      if (profile) {
+        await this.redis.cacheUserProfile(activeUser.id, {
+          currentLevel: profile.currentLevel,
+          confidenceScore: String(profile.confidenceScore),
+          vnSupportEnabled: String(profile.vnSupportEnabled),
+          tier: activeUser.tier,
+        });
+      }
+
+      const tokens = await this.generateTokens(activeUser);
+      // Hash refreshToken outside of SQL transaction
+      const hash = await bcrypt.hash(this.prehashPassword(tokens.refreshToken), 10);
+      await this.userRepo.update(activeUser.id, { refreshTokenHash: hash });
+
+      authResult = {
+        ...tokens,
+        user: this.toAuthUser(activeUser),
+      };
+
+      this.logger.log(`User verified and ACTIVE: ${authResult.user.email}`);
+      return authResult;
+    } catch (error) {
+      this.logger.error(
+        `OTP Verification failed: ${(error as Error).message}`,
         (error as Error).stack,
       );
       throw error;

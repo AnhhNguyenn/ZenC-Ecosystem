@@ -36,16 +36,31 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Phase G: Dispatch complex grammar intent to RabbitMQ
-   * Fire-and-forget resilient message queueing.
+   * Fire-and-forget resilient message queueing. Use for background tasks
+   * where the Gateway does not need to wait for a response (e.g. Emails, Logging, vector deletion).
    */
-  async dispatchDeepBrainTask(payload: any): Promise<void> {
+  async dispatchDeepBrainTask(pattern: string, payload: any): Promise<void> {
     try {
-      // Use emit() for event-based fire-and-forget to RabbitMQ exchanges
-      this.client.emit('deep_brain_task', payload);
-      this.logger.log(`[RabbitMQ] Dispatched deep brain task for session: ${payload.sessionId}`);
+      this.client.emit(pattern, payload);
+      this.logger.log(`[RabbitMQ] Dispatched task ${pattern} for session: ${payload.sessionId || payload.userId || 'N/A'}`);
     } catch (e) {
-      this.logger.error(`[RabbitMQ] Failed to dispatch task: ${e}`);
+      this.logger.error(`[RabbitMQ] Failed to dispatch task ${pattern}: ${e}`);
+    }
+  }
+
+  /**
+   * Request-Response message queueing. Use for deep brain handovers
+   * where the Gateway MUST wait for the Python worker to respond, so
+   * that it can apply timeouts and fallbacks.
+   */
+  async requestDeepBrainTask(pattern: string, payload: any): Promise<any> {
+    try {
+      const result = await this.client.send(pattern, payload).toPromise();
+      this.logger.log(`[RabbitMQ] Successfully processed request task ${pattern} for session: ${payload.sessionId}`);
+      return result;
+    } catch (e) {
+      this.logger.error(`[RabbitMQ] Failed to request task ${pattern}: ${e}`);
+      throw e;
     }
   }
 

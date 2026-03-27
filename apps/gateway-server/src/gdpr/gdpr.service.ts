@@ -18,6 +18,7 @@ import {
   Notification,
 } from '../entities';
 import { RedisService } from '../common/redis.service';
+import { RabbitMQService } from '../common/rabbitmq.service';
 
 /**
  * GdprService – GDPR/Privacy compliance module.
@@ -53,6 +54,7 @@ export class GdprService {
     @InjectRepository(DailyGoal) private readonly goalRepo: Repository<DailyGoal>,
     @InjectRepository(Notification) private readonly notifRepo: Repository<Notification>,
     private readonly redis: RedisService,
+    private readonly rabbitmq: RabbitMQService,
   ) {}
 
   /**
@@ -204,6 +206,11 @@ export class GdprService {
 
       // Purge ALL Redis caches for this user
       await this._purgeRedisData(userId);
+
+      // Dispatch event to AI Worker to delete Qdrant Vectors
+      this.rabbitmq.dispatchDeepBrainTask('gdpr_delete_user_vectors', { userId }).catch((err) => {
+        this.logger.error(`Failed to dispatch GDPR vector deletion for user ${userId}: ${err.message}`);
+      });
 
       this.logger.warn(
         `GDPR ACCOUNT DELETION COMPLETED: userId=${userId}, tablesWiped=${tablesWiped}`,

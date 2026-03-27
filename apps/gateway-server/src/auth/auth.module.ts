@@ -9,6 +9,7 @@ import { JwtStrategy } from './jwt.strategy';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { User } from '../entities/user.entity';
 import { UserProfile } from '../entities/user-profile.entity';
+import { RabbitMQModule } from '../common/rabbitmq.module';
 
 /**
  * AuthModule – Encapsulates authentication concerns.
@@ -43,6 +44,7 @@ import { UserProfile } from '../entities/user-profile.entity';
       },
     }),
     TypeOrmModule.forFeature([User, UserProfile]),
+    RabbitMQModule,
   ],
   providers: [AuthService, JwtStrategy, JwtAuthGuard],
   controllers: [AuthController],

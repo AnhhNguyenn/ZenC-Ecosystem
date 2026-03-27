@@ -8,6 +8,7 @@ import { RedisModule } from './common/redis.module';
 import { RabbitMQModule } from './common/rabbitmq.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { BullModule } from '@nestjs/bullmq';
+import { ThrottlerModule } from '@nestjs/throttler';
 
 // ── Feature Modules ──────────────────────────────────────────
 import { AuthModule } from './auth/auth.module';
@@ -112,6 +113,10 @@ import { SocialModule } from './social/social.module';
 
     // ── Infrastructure ────────────────────────────────────────
     ScheduleModule.forRoot(),
+    ThrottlerModule.forRoot([{
+      ttl: 60000,
+      limit: 100,
+    }]),
     RedisModule,
     RabbitMQModule,
     BullModule.forRootAsync({

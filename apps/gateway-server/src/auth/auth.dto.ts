@@ -34,6 +34,17 @@ export class RefreshTokenDto {
   refreshToken?: string;
 }
 
+export class VerifyOtpDto {
+  @IsEmail()
+  @MaxLength(255)
+  email!: string;
+
+  @IsString()
+  @MinLength(6)
+  @MaxLength(6)
+  otp!: string;
+}
+
 export interface JwtPayload {
   sub: string;
   email: string;

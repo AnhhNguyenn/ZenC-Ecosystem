@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zenc-ai-worker
+  namespace: zenc-production
+spec:
+  replicas: 5 # Initial replica, HPA dynamically scales to 200 based on RabbitMQ Queue Length
+  selector:
+    matchLabels:
+      app: zenc-worker
+  template:
+    metadata:
+      labels:
+        app: zenc-worker
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: zenc-node-pool
+                operator: In
+                values:
+                - worker-pool
+      containers:
+      - name: ai-worker
+        image: zenc-ai-worker:latest
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+        envFrom:
+        - secretRef:
+            name: zenc-secrets-prod
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zenc-worker-service
+  namespace: zenc-production
+spec:
+  type: ClusterIP
+  selector:
+    app: zenc-worker
+  ports:
+  - port: 8000
+    targetPort: 8000

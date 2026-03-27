@@ -49,8 +49,8 @@ export class MultiLoginGuard implements CanActivate {
     } catch (error) {
       if (error instanceof WsException) throw error;
       this.logger.error(`MultiLoginGuard error: ${(error as Error).message}`);
-      // Don't block on Redis failures
-      return true;
+      // Fail closed on Redis failures for billing security
+      throw new WsException('Internal server error during session validation');
     }
   }
 }

@@ -1,7 +1,7 @@
 # ZenC Ecosystem – Development Guide & Standard Processes
 
 > **Status:** Active
-> **Last Updated:** 2026-02-13
+> **Last Updated:** 2026-03-27
 
 This document outlines the **Standard Operating Procedures (SOP)** for developing, testing, and deploying the ZenC Ecosystem.
 
@@ -18,7 +18,9 @@ ZenC-Ecosystem/
 │   ├── ai-worker/        # AI Processing (Python/FastAPI) - Port 8000
 │   ├── web-user/         # User Frontend (Next.js 14) - Port 3001
 │   └── web-admin/        # Admin Dashboard (Next.js 14) - Port 3002
-├── docker-compose.yml    # Orchestration
+├── k8s/                  # Kubernetes manifests (Phase G)
+├── docs/                 # Architecture & scale-up plans
+├── docker-compose.yml    # Local orchestration
 └── README.md             # Entry point
 ```
 
@@ -35,11 +37,13 @@ ZenC-Ecosystem/
 
 ### Quick Start (Dev Mode)
 
-1.  **Start Infrastructure** (DB, Redis, Vector DB):
+1.  **Start Infrastructure** (DB, Redis, RabbitMQ, Vector DB):
 
     ```bash
-    docker-compose up -d postgres redis qdrant
+    docker-compose up -d postgres redis rabbitmq qdrant
     ```
+
+    > RabbitMQ Management UI available at http://localhost:15672 (guest/guest)
 
 2.  **Start Backend (Gateway)**:
 
@@ -200,6 +204,24 @@ TOKEN_WATCHDOG_THRESHOLD=500
 BCRYPT_SALT_ROUNDS=12
 ADMIN_SECRET_KEY=zenc_admin_bootstrap_key
 
+# ── RabbitMQ (Phase G: Golden Combo) ────────────────────────
+RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+RABBITMQ_USER=guest
+RABBITMQ_PASSWORD=guest
+
+# ── PostgreSQL (replaces MSSQL) ─────────────────────────────
+PG_HOST=postgres
+PG_PORT=5432
+PG_USER=postgres
+PG_PASSWORD=your_pg_password
+PG_DATABASE=zenc_ai
+# Optional: set to enable Read/Write replication
+PG_REPLICA_HOST=
+PG_REPLICA_PORT=5432
+
+# ── Groq (Phase F: LLM Intent Router) ───────────────────────
+GROQ_API_KEY=your_groq_api_key_here
+
 # ── Node Environment ────────────────────────────────────────
 NODE_ENV=development
 
@@ -307,6 +329,65 @@ npm run format:check    # CI check (no changes)
 npm run lint     # Lint with auto-fix (Gateway)
 npm run lint     # Lint check (Web apps)
 ```
+
+---
+
+## 11. Phase G — Enterprise Architecture (1M Users)
+
+### 11.1 The Golden Combo: Redis + RabbitMQ
+
+Phân chia trách nhiệm rõ ràng — **cấm chồng chéo**:
+
+| Hệ thống | Vai trò được phép |
+|----------|-------------------|
+| **Redis** | Rate Limiting (`INCR`+`EXPIRE`), Session lookup O(1), User Profile cache (24h TTL), Socket.io Pub/Sub Adapter |
+| **RabbitMQ** | Deep Brain Task Queue (`deep_brain_tasks`), Post-Session Scoring (`post_session_eval`) |
+
+**NestJS Gateway dispatch (fire-and-forget):**
+```typescript
+// apps/gateway-server/src/common/rabbitmq.service.ts
+await this.rabbitmq.dispatchDeepBrainTask({ sessionId, userId, question, taskType: 'grammar_explanation' });
+```
+
+**Python Worker consume (aio-pika, async):**
+```python
+# apps/ai-worker/rabbitmq_consumer.py
+async with queue.iterator() as q:
+    async for message in q:
+        await handler(message.body.decode())
+        await message.ack()  # or nack(requeue=True) on error
+```
+
+### 11.2 Kubernetes Manifest Layout (`k8s/`)
+
+| File | Mô tả |
+|------|-------|
+| `01-namespaces.yaml` | `zenc-production`, `zenc-monitoring` namespaces |
+| `04-api-deployment.yaml` | API Gateway (api-pool, 100–300 pods, CPU limit 1000m) |
+| `05-worker-deployment.yaml` | AI Worker (worker-pool, 50–200 pods) |
+| `06-ai-deployment.yaml` | GPU Inference (ai-gpu-pool, NVIDIA toleration, 32Gi RAM) |
+| `08-hpa.yaml` | HPA: CPU >70% → scale API; RMQ queue depth >10 → scale Worker |
+| `09-ingress.yaml` | NGINX Ingress: 50 RPS limit, circuit breaker (3 retries), 15s timeout |
+| `10-pgbouncer.yaml` | PgBouncer: transaction mode, 5000 max clients, 100 pool size |
+
+### 11.3 Database HA
+
+- **PgBouncer**: Deployed as K8s ClusterIP in front of Postgres, absorbs 5000 concurrent connections down to 100 real PG connections.
+- **Read/Write Replication**: TypeORM replication auto-activates when `PG_REPLICA_HOST` env var is set. All `find/select` queries route to replica; all `save/update/delete` route to primary.
+
+### 11.4 Multi-Region DNS Failover
+
+Chain: **Việt Nam (Primary) → Singapore → Tokyo**
+- Cloudflare Health Check: `https://api.zenc.ai/health`, timeout 5s, 3 retries
+- Failover TTL: 60s
+
+### 11.5 Security Hardening (Phase F)
+
+- **JWT Refresh Token**: Pre-hash via `crypto.createHash('sha256')` before Bcrypt to avoid 72-byte truncation collision.
+- **Intent Routing**: LLM-based `classifyIntent()` via Groq Llama-3-8b (1500ms timeout) replaces naive regex.
+- **Payload Guard**: All WebSocket handlers have `if (!data) return` + `try-catch`.
+- **Provider Failover**: Max 2 Gemini↔OpenAI switches per session, mutex-guarded.
+- **Zombie Sessions**: `@Cron(EVERY_HOUR)` force-closes sessions where `endTime IS NULL` and `startTime < NOW()-2h`.
 
 ---
 

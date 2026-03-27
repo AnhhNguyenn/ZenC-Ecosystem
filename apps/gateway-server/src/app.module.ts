@@ -5,6 +5,8 @@ import { AllEntities } from './entities';
 
 // ── Core Infrastructure ──────────────────────────────────────
 import { RedisModule } from './common/redis.module';
+import { RabbitMQModule } from './common/rabbitmq.module';
+import { ScheduleModule } from '@nestjs/schedule';
 import { BullModule } from '@nestjs/bullmq';
 
 // ── Feature Modules ──────────────────────────────────────────
@@ -109,7 +111,9 @@ import { SocialModule } from './social/social.module';
     }),
 
     // ── Infrastructure ────────────────────────────────────────
+    ScheduleModule.forRoot(),
     RedisModule,
+    RabbitMQModule,
     BullModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

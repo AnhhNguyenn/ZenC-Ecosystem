@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zenc-ai-gpu
+  namespace: zenc-production
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: zenc-ai
+  template:
+    metadata:
+      labels:
+        app: zenc-ai
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: zenc-node-pool
+                operator: In
+                values:
+                - ai-gpu-pool
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: ai-inference
+        image: zenc-ai-inference:latest
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            cpu: "8000m"
+            memory: "32Gi"
+        envFrom:
+        - secretRef:
+            name: zenc-secrets-prod

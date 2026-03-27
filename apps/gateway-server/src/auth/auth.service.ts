@@ -58,14 +58,14 @@ export class AuthService {
       this.saltRounds,
     );
 
-    let savedUser!: User;
+    let authResult!: AuthResultDto;
 
     try {
       await this.dataSource.transaction(async (manager) => {
-        const userRepo = manager.getRepository(User);
+        const transactionalUserRepo = manager.getRepository(User);
         const profileRepo = manager.getRepository(UserProfile);
 
-        const existingUser = await userRepo.findOne({
+        const existingUser = await transactionalUserRepo.findOne({
           where: { email },
         });
 
@@ -73,7 +73,7 @@ export class AuthService {
           throw new ConflictException('Email already registered');
         }
 
-        const user = userRepo.create({
+        const user = transactionalUserRepo.create({
           email,
           passwordHash,
           tier: 'FREE',
@@ -81,7 +81,7 @@ export class AuthService {
           status: 'ACTIVE',
         });
 
-        savedUser = await userRepo.save(user);
+        const savedUser = await transactionalUserRepo.save(user);
 
         const profile = profileRepo.create({
           userId: savedUser.id,
@@ -92,23 +92,26 @@ export class AuthService {
         });
 
         await profileRepo.save(profile);
+
+        await this.redis.cacheUserProfile(savedUser.id, {
+          currentLevel: 'A1',
+          confidenceScore: '0.5',
+          vnSupportEnabled: 'true',
+          tier: savedUser.tier,
+        });
+
+        const tokens = await this.generateTokens(savedUser);
+        const hash = await bcrypt.hash(this.prehashPassword(tokens.refreshToken), 10);
+        await transactionalUserRepo.update(savedUser.id, { refreshTokenHash: hash });
+
+        authResult = {
+          ...tokens,
+          user: this.toAuthUser(savedUser),
+        };
       });
 
-      await this.redis.cacheUserProfile(savedUser.id, {
-        currentLevel: 'A1',
-        confidenceScore: '0.5',
-        vnSupportEnabled: 'true',
-        tier: savedUser.tier,
-      });
-
-      const tokens = await this.generateTokens(savedUser);
-      await this.storeRefreshToken(savedUser.id, tokens.refreshToken);
-
-      this.logger.log(`User registered: ${savedUser.email}`);
-      return {
-        ...tokens,
-        user: this.toAuthUser(savedUser),
-      };
+      this.logger.log(`User registered: ${authResult.user.email}`);
+      return authResult;
     } catch (error) {
       if (error instanceof ConflictException || this.isDuplicateKeyError(error)) {
         throw new ConflictException('Email already registered');
@@ -197,7 +200,10 @@ export class AuthService {
 
       this.assertUserCanAuthenticate(user);
 
-      const isRefreshValid = await bcrypt.compare(refreshToken, user.refreshTokenHash);
+      const isRefreshValid = await bcrypt.compare(
+        this.prehashPassword(refreshToken),
+        user.refreshTokenHash,
+      );
       if (!isRefreshValid) {
         this.logger.warn(`Refresh token reuse detected for user ${user.id}`);
         await this.invalidateUserSessions(user.id);
@@ -263,7 +269,7 @@ export class AuthService {
   }
 
   private async storeRefreshToken(userId: string, refreshToken: string): Promise<void> {
-    const hash = await bcrypt.hash(refreshToken, 10);
+    const hash = await bcrypt.hash(this.prehashPassword(refreshToken), 10);
     await this.userRepo.update(userId, { refreshTokenHash: hash });
   }
 

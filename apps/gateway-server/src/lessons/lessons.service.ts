@@ -364,13 +364,21 @@ export class LessonsService {
           userId,
           date: today,
           xpTarget: 20,
+          xpEarned,
+          lessonsCompleted: 1,
+          isCompleted: xpEarned >= 20,
         });
-      }
+        await manager.save(dailyGoal);
+      } else {
+        await manager.increment(DailyGoal, { id: dailyGoal.id }, 'xpEarned', xpEarned);
+        await manager.increment(DailyGoal, { id: dailyGoal.id }, 'lessonsCompleted', 1);
 
-      dailyGoal.xpEarned += xpEarned;
-      dailyGoal.lessonsCompleted += 1;
-      dailyGoal.isCompleted = dailyGoal.xpEarned >= dailyGoal.xpTarget;
-      await manager.save(dailyGoal);
+        // Re-fetch to check completion status safely after atomic increment
+        const updatedGoal = await manager.findOne(DailyGoal, { where: { id: dailyGoal.id } });
+        if (updatedGoal && updatedGoal.xpEarned >= updatedGoal.xpTarget && !updatedGoal.isCompleted) {
+           await manager.update(DailyGoal, { id: dailyGoal.id }, { isCompleted: true });
+        }
+      }
 
       // 3. Update streak
       let streak = await manager.findOne(Streak, { where: { userId } });
@@ -408,7 +416,9 @@ export class LessonsService {
         streakUpdated = true;
       }
 
-      await manager.save(streak);
+      if (streakUpdated) {
+        await manager.save(streak); // streak logic involves complex date math, keep save but within transaction.
+      }
 
       // 4. Update leaderboard in Redis
       await this.redis.addLeaderboardXp(userId, xpEarned);

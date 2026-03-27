@@ -14,6 +14,7 @@ import {
   DailyGoal,
   Notification,
 } from '../entities';
+import { RabbitMQModule } from '../common/rabbitmq.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import {
       DailyGoal,
       Notification,
     ]),
+    RabbitMQModule,
   ],
   controllers: [GdprController],
   providers: [GdprService],

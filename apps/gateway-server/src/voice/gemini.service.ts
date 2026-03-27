@@ -44,6 +44,56 @@ export class GeminiService implements OnModuleDestroy {
   }
 
   /**
+   * Immediately close the WebSocket connection for a session and remove it from memory.
+   * This is used to prevent "Ghost LLM" connections from billing the system when the
+   * client has already disconnected.
+   */
+  destroySession(sessionId: string): void {
+    const session = this.activeSessions.get(sessionId);
+    if (!session) return;
+
+    if (session.ws) {
+      this.logger.log(`Force closing Gemini WebSocket for session ${sessionId}`);
+      try {
+        // Send a client turn completion message to gracefully signal end of interaction
+        if (session.ws.readyState === WebSocket.OPEN) {
+          session.ws.send(JSON.stringify({
+             clientContent: { turnComplete: true }
+          }));
+          session.ws.close();
+        }
+      } catch (e) {
+        this.logger.error(`Error force closing Gemini session ${sessionId}`, (e as Error).stack);
+      }
+      session.ws.removeAllListeners();
+    }
+
+    // Removing undefined reconnectTimer. Note: if reconnect features are re-added, they should use a mapped property.
+    session.emitter.removeAllListeners();
+    this.activeSessions.delete(sessionId);
+  }
+
+  /**
+   * Cancel an ongoing AI stream. Useful before handling over to another AI to prevent collisions.
+   */
+  cancelResponse(sessionId: string): void {
+    const session = this.activeSessions.get(sessionId);
+    if (!session?.ws || session.ws.readyState !== WebSocket.OPEN) return;
+
+    try {
+      // Sending a client turn complete/interruption message depending on protocol support
+      // In the Multimodal Live API, sending a new empty clientContent with turnComplete true
+      // can interrupt the current turn.
+      session.ws.send(JSON.stringify({
+        clientContent: { turnComplete: true }
+      }));
+      this.logger.log(`Sent cancelResponse to Gemini for session ${sessionId}`);
+    } catch (e) {
+      this.logger.error(`Error sending cancelResponse to Gemini ${sessionId}`, (e as Error).stack);
+    }
+  }
+
+  /**
    * Check if this provider is healthy and available.
    * Used by VoiceGateway for provider selection.
    */

@@ -10,6 +10,7 @@ import { AuthService } from './auth.service';
 import { User } from '../entities/user.entity';
 import { UserProfile } from '../entities/user-profile.entity';
 import { RedisService } from '../common/redis.service';
+import { RabbitMQService } from '../common/rabbitmq.service';
 
 const prehashPassword = (password: string): string =>
   createHash('sha256').update(password, 'utf8').digest('base64');
@@ -71,10 +72,17 @@ describe('AuthService', () => {
   const mockRedisService = {
     cacheUserProfile: jest.fn().mockResolvedValue(undefined),
     removeActiveSession: jest.fn().mockResolvedValue(undefined),
+    ensureAuthVersionPersistent: jest.fn().mockResolvedValue(undefined),
     get: jest.fn().mockResolvedValue(null),
     getClient: jest.fn(() => ({
       incr: jest.fn().mockResolvedValue(1),
+      set: jest.fn().mockResolvedValue('OK'),
+      del: jest.fn().mockResolvedValue(1),
     })),
+  };
+
+  const mockRabbitMQService = {
+    dispatchDeepBrainTask: jest.fn().mockResolvedValue(undefined),
   };
 
   beforeEach(async () => {
@@ -87,6 +95,7 @@ describe('AuthService', () => {
         { provide: JwtService, useValue: mockJwtService },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: RedisService, useValue: mockRedisService },
+        { provide: RabbitMQService, useValue: mockRabbitMQService },
       ],
     }).compile();
 
@@ -107,26 +116,24 @@ describe('AuthService', () => {
       await expect(service.register(registerDto)).rejects.toThrow(ConflictException);
     });
 
-    it('should register a new user and return tokens', async () => {
+    it('should register a new user and return userId and email', async () => {
       txUserRepo.findOne.mockResolvedValue(null);
       txUserRepo.create.mockImplementation((value) => value);
       txUserRepo.save.mockResolvedValue({
         id: 'uuid-1',
         email: 'test@zenc.ai',
         tier: 'FREE',
-        status: 'ACTIVE',
+        status: 'UNVERIFIED',
       });
       txProfileRepo.create.mockImplementation((value) => value);
       txProfileRepo.save.mockResolvedValue({});
 
       const result = await service.register(registerDto);
 
-      expect(result).toHaveProperty('accessToken');
-      expect(result).toHaveProperty('refreshToken');
-      expect(result.user.email).toBe('test@zenc.ai');
+      expect(result.email).toBe('test@zenc.ai');
+      expect(result.userId).toBe('uuid-1');
       expect(txUserRepo.save).toHaveBeenCalled();
       expect(txProfileRepo.save).toHaveBeenCalled();
-      expect(mockRedisService.cacheUserProfile).toHaveBeenCalled();
     });
   });
 

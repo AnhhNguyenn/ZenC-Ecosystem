@@ -53,6 +53,50 @@ export class OpenAIRealtimeService implements OnModuleDestroy {
   }
 
   /**
+   * Immediately close the WebSocket connection for a session and remove it from memory.
+   * This is used to prevent "Ghost LLM" connections from billing the system when the
+   * client has already disconnected.
+   */
+  destroySession(sessionId: string): void {
+    const session = this.activeSessions.get(sessionId);
+    if (!session) return;
+
+    if (session.ws) {
+      this.logger.log(`Force closing OpenAI WebSocket for session ${sessionId}`);
+      try {
+        if (session.ws.readyState === WebSocket.OPEN) {
+          session.ws.close();
+        }
+      } catch (e) {
+        this.logger.error(`Error force closing OpenAI session ${sessionId}`, (e as Error).stack);
+      }
+      session.ws.removeAllListeners();
+    }
+
+    // Removing undefined reconnectTimer. Note: if reconnect features are re-added, they should use a mapped property.
+    session.emitter.removeAllListeners();
+    this.activeSessions.delete(sessionId);
+  }
+
+  /**
+   * Cancel an ongoing AI stream. Useful before handling over to another AI to prevent collisions.
+   */
+  cancelResponse(sessionId: string): void {
+    const session = this.activeSessions.get(sessionId);
+    if (!session?.ws || session.ws.readyState !== WebSocket.OPEN) return;
+
+    try {
+      // Send response.cancel event to OpenAI Realtime API to immediately stop generation
+      session.ws.send(JSON.stringify({
+        type: 'response.cancel'
+      }));
+      this.logger.log(`Sent cancelResponse to OpenAI for session ${sessionId}`);
+    } catch (e) {
+      this.logger.error(`Error sending cancelResponse to OpenAI ${sessionId}`, (e as Error).stack);
+    }
+  }
+
+  /**
    * Check if this provider is healthy and available.
    * Used by VoiceGateway for fallback decision.
    */

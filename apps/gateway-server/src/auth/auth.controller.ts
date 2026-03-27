@@ -14,7 +14,7 @@ import { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
-import { JwtPayload, LoginDto, RefreshTokenDto, RegisterDto } from './auth.dto';
+import { JwtPayload, LoginDto, RefreshTokenDto, RegisterDto, VerifyOtpDto } from './auth.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -27,14 +27,28 @@ export class AuthController {
   @HttpCode(HttpStatus.CREATED)
   async register(
     @Body() dto: RegisterDto,
-    @Res({ passthrough: true }) response: Response,
   ) {
     const result = await this.authService.register(dto);
-    this.setRefreshTokenCookie(response, result.refreshToken);
 
     return {
       statusCode: HttpStatus.CREATED,
-      message: 'Registration successful',
+      message: 'Registration initiated. Please verify your OTP to complete registration.',
+      data: result,
+    };
+  }
+
+  @Post('verify-otp')
+  @HttpCode(HttpStatus.OK)
+  async verifyOtp(
+    @Body() dto: VerifyOtpDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.authService.verifyOtp(dto);
+    this.setRefreshTokenCookie(response, result.refreshToken);
+
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'Email verified successfully',
       data: result,
     };
   }

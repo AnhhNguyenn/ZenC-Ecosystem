@@ -45,11 +45,11 @@ export class Conversation {
   @Column({ length: 100, nullable: true })
   topicId!: string | null;
 
-  @Column({ type: 'nvarchar', length: 'MAX', nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   transcript!: string | null;
 
   /** User-only transcript for analysis */
-  @Column({ type: 'nvarchar', length: 'MAX', nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   userTranscript!: string | null;
 
   // ── Post-session scores (0-100, filled by Worker) ──────────
@@ -69,15 +69,15 @@ export class Conversation {
   overallScore!: number | null;
 
   /** AI-generated highlights from the conversation */
-  @Column({ type: 'nvarchar', length: 'MAX', nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   highlights!: string | null;
 
   /** AI-generated improvement suggestions */
-  @Column({ type: 'nvarchar', length: 'MAX', nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   improvements!: string | null;
 
   /** Vietnamese-language advice */
-  @Column({ type: 'nvarchar', length: 'MAX', nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   vietnameseAdvice!: string | null;
 
   @Column({ type: 'float', default: 0 })

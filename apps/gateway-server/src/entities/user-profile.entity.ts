@@ -27,7 +27,7 @@ export class UserProfile {
   @JoinColumn({ name: 'userId' })
   user!: User;
 
-  @Column({ type: 'uniqueidentifier' })
+  @Column({ type: 'uuid' })
   userId!: string;
 
   /**
@@ -35,7 +35,7 @@ export class UserProfile {
    * Used by the adaptive prompt engine to calibrate vocabulary complexity.
    */
   @Column({
-    type: 'nvarchar',
+    type: 'varchar',
     length: 2,
     default: 'A1',
   })
@@ -52,7 +52,7 @@ export class UserProfile {
   confidenceScore!: number;
 
   /** When true, Vietnamese hints are injected into AI prompts */
-  @Column({ type: 'bit', default: true })
+  @Column({ type: 'boolean', default: true })
   vnSupportEnabled!: boolean;
 
   /**

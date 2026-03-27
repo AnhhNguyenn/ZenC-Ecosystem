@@ -31,20 +31,20 @@ export class UserAchievement {
   @JoinColumn({ name: 'userId' })
   user!: User;
 
-  @Column({ type: 'uniqueidentifier' })
+  @Column({ type: 'uuid' })
   userId!: string;
 
   @ManyToOne(() => Achievement, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'achievementId' })
   achievement!: Achievement;
 
-  @Column({ type: 'uniqueidentifier' })
+  @Column({ type: 'uuid' })
   achievementId!: string;
 
-  @CreateDateColumn({ type: 'datetime2' })
+  @CreateDateColumn({ type: 'timestamptz' })
   readonly unlockedAt!: Date;
 
   /** Null until user dismisses the notification toast */
-  @Column({ type: 'datetime2', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   notifiedAt!: Date | null;
 }

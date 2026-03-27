@@ -373,6 +373,172 @@ export class RedisService implements OnModuleDestroy {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // AUTH VERSION (Fail-Close Security)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Ensure auth_version key is persistent in Redis (no TTL).
+   * Called after every login/register to guarantee the key
+   * survives Redis restarts via AOF/RDB persistence.
+   */
+  async ensureAuthVersionPersistent(userId: string, version: number): Promise<void> {
+    try {
+      const key = `auth_version:${userId}`;
+      await this.client.set(key, String(version));
+      // Remove any accidental TTL – this key must NEVER expire
+      await this.client.persist(key);
+    } catch (error) {
+      this.logger.error(`Failed to persist auth_version for ${userId}`, error);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // BATCH LESSON COMPLETION (Eliminate N+1)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Check multiple lesson completions in a single Redis round-trip
+   * using a pipeline of SISMEMBER commands.
+   * Returns a Set of completed lessonIds.
+   */
+  async batchCheckLessonCompletions(
+    userId: string,
+    lessonIds: string[],
+  ): Promise<Set<string>> {
+    const completed = new Set<string>();
+    if (lessonIds.length === 0) return completed;
+
+    try {
+      const key = `lesson_completion:${userId}`;
+      const pipeline = this.client.pipeline();
+      for (const lessonId of lessonIds) {
+        pipeline.sismember(key, lessonId);
+      }
+      const results = await pipeline.exec();
+      if (results) {
+        for (let i = 0; i < results.length; i++) {
+          const [err, val] = results[i];
+          if (!err && val === 1) {
+            completed.add(lessonIds[i]);
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Failed batch lesson check for ${userId}`, error);
+    }
+    return completed;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // DISTRIBUTED SESSION BILLING
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Atomically increment the token counter for a voice session.
+   * Stored in Redis so billing data survives Gateway crashes.
+   * Key: session_billing:{sessionId} with a 24-hour fallback TTL.
+   */
+  async incrementSessionTokens(sessionId: string, tokens: number): Promise<number> {
+    try {
+      const key = `session_billing:${sessionId}`;
+      const pipeline = this.client.pipeline();
+      pipeline.incrby(key, tokens);
+      pipeline.expire(key, 86400); // 24h safety TTL
+      const results = await pipeline.exec();
+      return (results?.[0]?.[1] as number) || 0;
+    } catch (error) {
+      this.logger.error(`Failed to increment session billing for ${sessionId}`, error);
+      return 0;
+    }
+  }
+
+  /** Read the current token count for a session (used during cleanup). */
+  async getSessionTokens(sessionId: string): Promise<number> {
+    try {
+      const raw = await this.client.get(`session_billing:${sessionId}`);
+      return Number.parseInt(raw ?? '0', 10) || 0;
+    } catch (error) {
+      this.logger.error(`Failed to read session billing for ${sessionId}`, error);
+      return 0;
+    }
+  }
+
+  /** Delete the session billing key after final commit. */
+  async deleteSessionBilling(sessionId: string): Promise<void> {
+    try {
+      await this.client.del(`session_billing:${sessionId}`);
+    } catch (error) {
+      this.logger.error(`Failed to delete session billing for ${sessionId}`, error);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // STATELESS TRANSCRIPT (Session crash recovery)
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Append a transcript line to the Redis List for a session.
+   * Expires after 2 hours (sessions longer than that should checkpoint anyway).
+   */
+  async appendTranscriptLine(sessionId: string, role: 'user' | 'ai', text: string): Promise<void> {
+    try {
+      const key = `transcript:${sessionId}`;
+      const entry = JSON.stringify({ role, text, ts: Date.now() });
+      await this.client.rpush(key, entry);
+      await this.client.expire(key, 7200); // 2 hours TTL
+    } catch (error) {
+      this.logger.error(`Failed to append transcript for ${sessionId}`, error);
+    }
+  }
+
+  /**
+   * Retrieve the full transcript for a session.
+   * Used during session reconnection to restore AI context.
+   */
+  async getFullTranscript(sessionId: string): Promise<Array<{ role: string; text: string; ts: number }>> {
+    try {
+      const key = `transcript:${sessionId}`;
+      const entries = await this.client.lrange(key, 0, -1);
+      return entries.map((e) => JSON.parse(e));
+    } catch (error) {
+      this.logger.error(`Failed to get transcript for ${sessionId}`, error);
+      return [];
+    }
+  }
+
+  /** Delete transcript after session cleanup. */
+  async deleteTranscript(sessionId: string): Promise<void> {
+    try {
+      await this.client.del(`transcript:${sessionId}`);
+    } catch (error) {
+      this.logger.error(`Failed to delete transcript for ${sessionId}`, error);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // REDIS STREAMS (Durable event delivery with ACK)
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Publish an event to a Redis Stream (replaces RPUSH-based queue).
+   * Consumer groups on the AI Worker side use XREADGROUP + XACK for
+   * guaranteed delivery even if the worker crashes mid-processing.
+   */
+  async publishToStream(streamName: string, data: Record<string, string>): Promise<string | null> {
+    try {
+      const fields: string[] = [];
+      for (const [key, value] of Object.entries(data)) {
+        fields.push(key, value);
+      }
+      const messageId = await this.client.xadd(streamName, '*', ...fields);
+      return messageId;
+    } catch (error) {
+      this.logger.error(`Failed to publish to stream ${streamName}`, error);
+      return null;
+    }
+  }
+
   async onModuleDestroy(): Promise<void> {
     await this.client.quit();
     await this.subscriber.quit();

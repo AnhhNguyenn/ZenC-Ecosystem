@@ -28,29 +28,29 @@ export class Session {
   @JoinColumn({ name: 'userId' })
   user!: User;
 
-  @Column({ type: 'uniqueidentifier' })
+  @Column({ type: 'uuid' })
   userId!: string;
 
-  @Column({ type: 'datetime2' })
+  @Column({ type: 'timestamptz' })
   startTime!: Date;
 
-  @Column({ type: 'datetime2', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   endTime!: Date | null;
 
   /** Accumulated token count for this session (atomic increments) */
   @Column({ type: 'int', default: 0 })
   totalTokensConsumed!: number;
 
-  @Column({ type: 'nvarchar', length: 45, nullable: true })
+  @Column({ type: 'varchar', length: 45, nullable: true })
   clientIp!: string | null;
 
-  @Column({ type: 'nvarchar', length: 512, nullable: true })
+  @Column({ type: 'varchar', length: 512, nullable: true })
   deviceFingerprint!: string | null;
 
   /** Full transcript stored for async grammar analysis by the Deep Brain */
-  @Column({ type: 'nvarchar', length: 'MAX', nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   transcript!: string | null;
 
-  @CreateDateColumn({ type: 'datetime2' })
+  @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 }

@@ -101,9 +101,15 @@ class PubSubListener:
                         self._handle_pronunciation,
                     )
                 ),
+                asyncio.create_task(
+                    self._listen_durable_queue(
+                        "deep_brain_tasks",
+                        self._handle_deep_brain,
+                    )
+                ),
             ]
             logger.info(
-                "Pub/Sub listener started on channels: grammar_realtime"
+                "Pub/Sub listener started on channels: grammar_realtime, deep_brain_tasks"
             )
         except Exception as e:
             logger.error(f"Failed to start Pub/Sub listener: {e}")
@@ -363,6 +369,43 @@ class PubSubListener:
         """
         from services.conversation_evaluator import handle_conversation_evaluate
         await handle_conversation_evaluate(raw_data, self._redis)
+
+    async def _handle_deep_brain(self, raw_data: str) -> None:
+        """
+        Process a deep_brain_tasks event from the Gateway.
+        """
+        logger.info("Received deep_brain_tasks event")
+        try:
+            payload = json.loads(raw_data)
+            session_id = payload.get("sessionId")
+            question = payload.get("question")
+            original_text = payload.get("originalText", "")
+
+            if not session_id or not question:
+                logger.warning("Incomplete deep_brain payload")
+                return
+
+            from events.grammar_analyzer import analyze_grammar
+            from events.tts_streamer import synthesize_speech
+            import base64
+
+            # 1. Generate Explanation
+            explanation_text = await analyze_grammar(original_text, question)
+            
+            # 2. Convert to Speech
+            audio_bytes = await synthesize_speech(explanation_text)
+
+            if audio_bytes and self._redis:
+                # 3. Stream back
+                b64_audio = base64.b64encode(audio_bytes).decode('utf-8')
+                message = f"{session_id}:{b64_audio}"
+                await self._redis.publish("tts_audio_stream", message)
+                logger.info(f"Published TTS audio for session {session_id}")
+            else:
+                logger.warning(f"Failed to generate TTS audio for session {session_id}")
+
+        except Exception as e:
+            logger.error(f"Error processing deep_brain_task: {e}", exc_info=True)
 
     async def stop(self) -> None:
         """

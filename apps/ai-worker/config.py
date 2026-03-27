@@ -6,10 +6,11 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    MSSQL_HOST: str = "localhost"
-    MSSQL_PORT: int = 1433
-    MSSQL_SA_PASSWORD: str = ""
-    MSSQL_DATABASE: str = "zenc_ai"
+    PG_HOST: str = "localhost"
+    PG_PORT: int = 5432
+    PG_USER: str = "postgres"
+    PG_PASSWORD: str = ""
+    PG_DATABASE: str = "zenc_ai"
 
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
@@ -23,6 +24,10 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GEMINI_EMBEDDING_MODEL: str = "text-embedding-004"
     AI_PROVIDER_TIMEOUT_SECONDS: float = 10.0
+
+    GROQ_API_KEY: str = ""
+    ELEVENLABS_API_KEY: str = ""
+    ELEVENLABS_VOICE_ID: str = "EXAVITQu4vr4xnSDxMaL" # Sarah voice
 
     WORKER_PORT: int = 8000
     DB_POOL_SIZE: int = 10

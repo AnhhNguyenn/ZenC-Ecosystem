@@ -54,39 +54,56 @@ import { SocialModule } from './social/social.module';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
-        const configuredPoolMin = Number(config.get<string>('DB_POOL_MIN', '5'));
         const configuredPoolMax = Number(config.get<string>('DB_POOL_MAX', '50'));
-        const poolMin = Number.isFinite(configuredPoolMin)
-          ? Math.max(1, configuredPoolMin)
-          : 5;
         const poolMax = Number.isFinite(configuredPoolMax)
-          ? Math.max(poolMin, configuredPoolMax)
+          ? Math.max(5, configuredPoolMax)
           : 50;
 
-        return {
-          type: 'mssql' as const,
-          host: config.get<string>('MSSQL_HOST', 'localhost'),
-          port: config.get<number>('MSSQL_PORT', 1433),
-          username: config.get<string>('MSSQL_USER', 'sa'),
-          password: config.get<string>('MSSQL_PASSWORD'),
-          database: config.get<string>('MSSQL_DATABASE', 'zenc_ai'),
+        const baseConfig = {
+          type: 'postgres' as const,
           entities: AllEntities,
           synchronize: false, // Rule: STRICTLY FALSE. Migrations must be used across all environments to prevent accidental drops.
           migrations: ['dist/migrations/*.js'],
           migrationsRun: config.get<string>('NODE_ENV') === 'production',
           logging: config.get<string>('NODE_ENV') === 'development',
-          options: {
-            encrypt: false,
-            trustServerCertificate: true,
-          },
           extra: {
-            connectionTimeout: 30000,
-            requestTimeout: 30000,
-          },
-          pool: {
-            min: poolMin,
             max: poolMax,
+            connectionTimeoutMillis: 30000,
+            statement_timeout: 30000,
           },
+        };
+
+        // CQRS: Use replication if replica is configured
+        const replicaHost = config.get<string>('PG_REPLICA_HOST');
+        if (replicaHost) {
+          return {
+            ...baseConfig,
+            replication: {
+              master: {
+                host: config.get<string>('PG_HOST', 'localhost'),
+                port: config.get<number>('PG_PORT', 5432),
+                username: config.get<string>('PG_USER', 'postgres'),
+                password: config.get<string>('PG_PASSWORD'),
+                database: config.get<string>('PG_DATABASE', 'zenc_ai'),
+              },
+              slaves: [{
+                host: replicaHost,
+                port: config.get<number>('PG_REPLICA_PORT', 5432),
+                username: config.get<string>('PG_USER', 'postgres'),
+                password: config.get<string>('PG_PASSWORD'),
+                database: config.get<string>('PG_DATABASE', 'zenc_ai'),
+              }],
+            },
+          };
+        }
+
+        return {
+          ...baseConfig,
+          host: config.get<string>('PG_HOST', 'localhost'),
+          port: config.get<number>('PG_PORT', 5432),
+          username: config.get<string>('PG_USER', 'postgres'),
+          password: config.get<string>('PG_PASSWORD'),
+          database: config.get<string>('PG_DATABASE', 'zenc_ai'),
         };
       },
     }),

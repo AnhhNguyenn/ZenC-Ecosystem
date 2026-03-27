@@ -23,14 +23,14 @@ from sqlalchemy import (
     Index,
     Text,
 )
-from sqlalchemy.dialects.mssql import UNIQUEIDENTIFIER, BIT
+from sqlalchemy.dialects.postgresql import UUID
 from database import Base
 
 
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(UNIQUEIDENTIFIER, primary_key=True, default=uuid.uuid4)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(255), unique=True, nullable=False, index=True)
     passwordHash = Column(String(255), nullable=False)
     displayName = Column(String(100), nullable=True)
@@ -48,8 +48,8 @@ class User(Base):
 class UserProfile(Base):
     __tablename__ = "user_profiles"
 
-    id = Column(UNIQUEIDENTIFIER, primary_key=True, default=uuid.uuid4)
-    userId = Column(UNIQUEIDENTIFIER, ForeignKey("users.id"), unique=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    userId = Column(UUID(as_uuid=True), ForeignKey("users.id"), unique=True)
     nativeLanguage = Column(String(50), default="vi")
     level = Column(String(2), default="A1")
     confidenceScore = Column(Float, default=0.5)
@@ -60,8 +60,8 @@ class UserProfile(Base):
 class UserMistake(Base):
     __tablename__ = "user_mistakes"
 
-    id = Column(UNIQUEIDENTIFIER, primary_key=True, default=uuid.uuid4)
-    userId = Column(UNIQUEIDENTIFIER, ForeignKey("users.id"), nullable=False, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    userId = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     originalText = Column(String(1000), name="originalSentence", nullable=False)
     correctedText = Column(String(1000), name="correctedSentence", nullable=False)
     grammarRuleId = Column(String(50), nullable=False)
@@ -76,8 +76,8 @@ class UserMistake(Base):
 class Session(Base):
     __tablename__ = "sessions"
 
-    id = Column(UNIQUEIDENTIFIER, primary_key=True, default=uuid.uuid4)
-    userId = Column(UNIQUEIDENTIFIER, ForeignKey("users.id"), nullable=False, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    userId = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     startTime = Column(DateTime, nullable=False)
     endTime = Column(DateTime, nullable=True)
     tokensConsumed = Column(Integer, name="totalTokensConsumed", default=0)
@@ -94,8 +94,8 @@ class Session(Base):
 class Exercise(Base):
     __tablename__ = "exercises"
 
-    id = Column(UNIQUEIDENTIFIER, primary_key=True, default=uuid.uuid4)
-    lessonId = Column(UNIQUEIDENTIFIER, ForeignKey("lessons.id"), nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    lessonId = Column(UUID(as_uuid=True), ForeignKey("lessons.id"), nullable=False)
     type = Column(String(20), nullable=False)
     prompt = Column(String(2000), nullable=False)
     correctAnswer = Column(String(2000), nullable=False)
@@ -105,9 +105,9 @@ class Exercise(Base):
 class ExerciseAttempt(Base):
     __tablename__ = "exercise_attempts"
 
-    id = Column(UNIQUEIDENTIFIER, primary_key=True, default=uuid.uuid4)
-    userId = Column(UNIQUEIDENTIFIER, ForeignKey("users.id"), nullable=False, index=True)
-    exerciseId = Column(UNIQUEIDENTIFIER, ForeignKey("exercises.id"), nullable=False, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    userId = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    exerciseId = Column(UUID(as_uuid=True), ForeignKey("exercises.id"), nullable=False, index=True)
     userAnswer = Column(String(2000), nullable=False)
     isCorrect = Column(Boolean, nullable=False)
     score = Column(Integer, default=0)
@@ -120,9 +120,9 @@ class ExerciseAttempt(Base):
 class UserVocabulary(Base):
     __tablename__ = "user_vocabulary"
 
-    id = Column(UNIQUEIDENTIFIER, primary_key=True, default=uuid.uuid4)
-    userId = Column(UNIQUEIDENTIFIER, ForeignKey("users.id"), nullable=False, index=True)
-    vocabularyId = Column(UNIQUEIDENTIFIER, nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    userId = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    vocabularyId = Column(UUID(as_uuid=True), nullable=False)
     masteryLevel = Column(String(20), default="NEW")
     nextReviewAt = Column(DateTime, nullable=True, index=True)
     intervalDays = Column(Integer, default=1)
@@ -138,8 +138,8 @@ class UserVocabulary(Base):
 class Streak(Base):
     __tablename__ = "streaks"
 
-    id = Column(UNIQUEIDENTIFIER, primary_key=True, default=uuid.uuid4)
-    userId = Column(UNIQUEIDENTIFIER, ForeignKey("users.id"), unique=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    userId = Column(UUID(as_uuid=True), ForeignKey("users.id"), unique=True)
     currentStreak = Column(Integer, default=0)
     longestStreak = Column(Integer, default=0)
     lastActiveDate = Column(String(10), nullable=True)
@@ -152,8 +152,8 @@ class Streak(Base):
 class DailyGoal(Base):
     __tablename__ = "daily_goals"
 
-    id = Column(UNIQUEIDENTIFIER, primary_key=True, default=uuid.uuid4)
-    userId = Column(UNIQUEIDENTIFIER, ForeignKey("users.id"), nullable=False, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    userId = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     date = Column(String(10), nullable=False)
     xpTarget = Column(Integer, default=20)
     xpEarned = Column(Integer, default=0)
@@ -168,8 +168,8 @@ class DailyGoal(Base):
 class Notification(Base):
     __tablename__ = "notifications"
 
-    id = Column(UNIQUEIDENTIFIER, primary_key=True, default=uuid.uuid4)
-    userId = Column(UNIQUEIDENTIFIER, ForeignKey("users.id"), nullable=False, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    userId = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     type = Column(String(30), nullable=False)
     title = Column(String(255), nullable=False)
     body = Column(String(1000), nullable=False)

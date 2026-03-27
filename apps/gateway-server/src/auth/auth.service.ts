@@ -149,6 +149,10 @@ export class AuthService {
       const tokens = await this.generateTokens(user);
       await this.storeRefreshToken(user.id, tokens.refreshToken);
 
+      // Persist auth version with no TTL (fail-close security)
+      const currentVersion = await this.getTokenVersion(user.id);
+      await this.redis.ensureAuthVersionPersistent(user.id, currentVersion);
+
       const profile = await this.profileRepo.findOne({ where: { userId: user.id } });
       if (profile) {
         await this.redis.cacheUserProfile(user.id, {

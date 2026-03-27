@@ -1,10 +1,8 @@
 """
 ZenC AI Worker - Database Connection & Session Factory.
 
-The codebase currently uses async service functions, but the deployed
-driver stack is synchronous (`pymssql`). To avoid blocking the event loop
-while keeping the current driver, we expose an async-compatible session
-adapter that runs DB operations in worker threads.
+PostgreSQL via psycopg2 driver. The async session adapter wraps
+synchronous calls in worker threads to keep the event loop non-blocking.
 """
 
 import asyncio
@@ -18,17 +16,16 @@ from config import settings
 
 def _build_connection_url() -> str:
     """
-    Build the MSSQL connection URL for SQLAlchemy.
+    Build the PostgreSQL connection URL for SQLAlchemy.
 
-    Using pymssql driver because it's pure Python and doesn't require
-    ODBC drivers to be installed in the container, simplifying the
-    Docker image.
+    Using psycopg2 driver (pure C extension) for maximum performance
+    and native PostgreSQL support.
     """
     return (
-        f"mssql+pymssql://"
-        f"sa:{settings.MSSQL_SA_PASSWORD}"
-        f"@{settings.MSSQL_HOST}:{settings.MSSQL_PORT}"
-        f"/{settings.MSSQL_DATABASE}"
+        f"postgresql+psycopg2://"
+        f"{settings.PG_USER}:{settings.PG_PASSWORD}"
+        f"@{settings.PG_HOST}:{settings.PG_PORT}"
+        f"/{settings.PG_DATABASE}"
     )
 
 
@@ -143,7 +140,7 @@ class AsyncSessionAdapter:
     Thin async facade over a synchronous SQLAlchemy Session.
 
     This keeps the service layer non-blocking without requiring an async
-    MSSQL driver migration in the same patch.
+    PostgreSQL driver (asyncpg) migration in the same patch.
     """
 
     def __init__(self, session: Session) -> None:

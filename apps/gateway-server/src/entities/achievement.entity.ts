@@ -33,22 +33,22 @@ export class Achievement {
   @PrimaryGeneratedColumn('uuid')
   readonly id!: string;
 
-  @Column({ type: 'nvarchar', length: 100 })
+  @Column({ type: 'varchar', length: 100 })
   name!: string;
 
-  @Column({ type: 'nvarchar', length: 500 })
+  @Column({ type: 'varchar', length: 500 })
   description!: string;
 
   /** CDN URL to badge icon asset */
-  @Column({ type: 'nvarchar', length: 500 })
+  @Column({ type: 'varchar', length: 500 })
   iconUrl!: string;
 
   /** Rarity tier affects UI display (golden border, sparkle animation, etc.) */
-  @Column({ type: 'nvarchar', length: 20, default: 'COMMON' })
+  @Column({ type: 'varchar', length: 20, default: 'COMMON' })
   rarity!: 'COMMON' | 'RARE' | 'EPIC' | 'LEGENDARY';
 
   /** JSON-serialized unlock condition – evaluated by gamification service */
-  @Column({ type: 'nvarchar', length: 'MAX' })
+  @Column({ type: 'varchar' })
   conditionJson!: string;
 
   /** XP bonus awarded when achievement is unlocked */
@@ -60,9 +60,9 @@ export class Achievement {
   sortOrder!: number;
 
   /** Hidden achievements are revealed only upon unlock (surprise delight) */
-  @Column({ type: 'bit', default: false })
+  @Column({ type: 'boolean', default: false })
   isHidden!: boolean;
 
-  @CreateDateColumn({ type: 'datetime2' })
+  @CreateDateColumn({ type: 'timestamptz' })
   readonly createdAt!: Date;
 }

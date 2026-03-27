@@ -39,7 +39,7 @@ export class ExerciseAttempt {
   @JoinColumn({ name: 'userId' })
   user!: User;
 
-  @Column({ type: 'uniqueidentifier' })
+  @Column({ type: 'uuid' })
   userId!: string;
 
   @Index()
@@ -47,15 +47,15 @@ export class ExerciseAttempt {
   @JoinColumn({ name: 'exerciseId' })
   exercise!: Exercise;
 
-  @Column({ type: 'uniqueidentifier' })
+  @Column({ type: 'uuid' })
   exerciseId!: string;
 
   /** The user's submitted answer (sanitized before storage) */
-  @Column({ type: 'nvarchar', length: 2000 })
+  @Column({ type: 'varchar', length: 2000 })
   userAnswer!: string;
 
   /** Server-computed correctness – NEVER trust client-side evaluation */
-  @Column({ type: 'bit' })
+  @Column({ type: 'boolean' })
   isCorrect!: boolean;
 
   /** Normalized score 0-100; partials possible for SPEAKING type */
@@ -78,6 +78,6 @@ export class ExerciseAttempt {
   attemptNumber!: number;
 
   @Index()
-  @CreateDateColumn({ type: 'datetime2' })
+  @CreateDateColumn({ type: 'timestamptz' })
   readonly createdAt!: Date;
 }

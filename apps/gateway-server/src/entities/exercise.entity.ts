@@ -37,14 +37,14 @@ export class Exercise {
   @JoinColumn({ name: 'lessonId' })
   lesson!: Lesson;
 
-  @Column({ type: 'uniqueidentifier' })
+  @Column({ type: 'uuid' })
   lessonId!: string;
 
-  @Column({ type: 'nvarchar', length: 20 })
+  @Column({ type: 'varchar', length: 20 })
   type!: 'MCQ' | 'FILL_BLANK' | 'SPEAKING' | 'LISTENING' | 'REORDER' | 'MATCHING';
 
   /** The question/prompt text displayed to the user */
-  @Column({ type: 'nvarchar', length: 2000 })
+  @Column({ type: 'varchar', length: 2000 })
   prompt!: string;
 
   /**
@@ -54,7 +54,7 @@ export class Exercise {
    * REORDER: ["scrambled", "words", "in", "random", "order"]
    * FILL_BLANK/SPEAKING/LISTENING: null or hints array
    */
-  @Column({ type: 'nvarchar', length: 'MAX', nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   optionsJson!: string | null;
 
   /**
@@ -63,7 +63,7 @@ export class Exercise {
    * for FILL_BLANK the expected word; for REORDER the correct sequence
    * as JSON array; for SPEAKING the reference text.
    */
-  @Column({ type: 'nvarchar', length: 2000 })
+  @Column({ type: 'varchar', length: 2000 })
   correctAnswer!: string;
 
   /**
@@ -71,26 +71,26 @@ export class Exercise {
    * Handles synonyms, spelling variants, contractions.
    * E.g., ["don't", "do not"] for a fill-blank exercise.
    */
-  @Column({ type: 'nvarchar', length: 'MAX', nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   acceptableAnswersJson!: string | null;
 
   /** Audio URL for LISTENING/SPEAKING exercises (CDN path) */
-  @Column({ type: 'nvarchar', length: 500, nullable: true })
+  @Column({ type: 'varchar', length: 500, nullable: true })
   audioUrl!: string | null;
 
   /** Optional image URL for visual context */
-  @Column({ type: 'nvarchar', length: 500, nullable: true })
+  @Column({ type: 'varchar', length: 500, nullable: true })
   imageUrl!: string | null;
 
   /**
    * Explanation shown after submission – teaches WHY the answer is correct.
    * Critical for learning efficacy (not just testing).
    */
-  @Column({ type: 'nvarchar', length: 2000, nullable: true })
+  @Column({ type: 'varchar', length: 2000, nullable: true })
   explanation!: string | null;
 
   /** Vietnamese hint for low-confidence users */
-  @Column({ type: 'nvarchar', length: 1000, nullable: true })
+  @Column({ type: 'varchar', length: 1000, nullable: true })
   hintVi!: string | null;
 
   /** Points awarded for correct answer (before difficulty multiplier) */
@@ -100,6 +100,6 @@ export class Exercise {
   @Column({ type: 'int', default: 0 })
   sortOrder!: number;
 
-  @CreateDateColumn({ type: 'datetime2' })
+  @CreateDateColumn({ type: 'timestamptz' })
   readonly createdAt!: Date;
 }

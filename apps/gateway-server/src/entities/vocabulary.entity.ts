@@ -28,45 +28,45 @@ export class Vocabulary {
   readonly id!: string;
 
   @Index()
-  @Column({ type: 'nvarchar', length: 200 })
+  @Column({ type: 'varchar', length: 200 })
   word!: string;
 
   /** Vietnamese translation */
-  @Column({ type: 'nvarchar', length: 500 })
+  @Column({ type: 'varchar', length: 500 })
   translation!: string;
 
   /** IPA phonetic transcription (e.g., /prəˌnʌnsiˈeɪʃən/) */
-  @Column({ type: 'nvarchar', length: 200, nullable: true })
+  @Column({ type: 'varchar', length: 200, nullable: true })
   phonetic!: string | null;
 
   /** Part of speech: noun, verb, adjective, adverb, preposition, etc. */
-  @Column({ type: 'nvarchar', length: 20 })
+  @Column({ type: 'varchar', length: 20 })
   partOfSpeech!: string;
 
   /** Example sentence demonstrating usage in context */
-  @Column({ type: 'nvarchar', length: 1000 })
+  @Column({ type: 'varchar', length: 1000 })
   exampleSentence!: string;
 
   /** Vietnamese translation of the example sentence */
-  @Column({ type: 'nvarchar', length: 1000, nullable: true })
+  @Column({ type: 'varchar', length: 1000, nullable: true })
   exampleTranslation!: string | null;
 
   /** CDN URL to native speaker audio recording */
-  @Column({ type: 'nvarchar', length: 500, nullable: true })
+  @Column({ type: 'varchar', length: 500, nullable: true })
   audioUrl!: string | null;
 
   /** CDN URL to illustrative image */
-  @Column({ type: 'nvarchar', length: 500, nullable: true })
+  @Column({ type: 'varchar', length: 500, nullable: true })
   imageUrl!: string | null;
 
   /** CEFR level for difficulty matching */
   @Index()
-  @Column({ type: 'nvarchar', length: 2 })
+  @Column({ type: 'varchar', length: 2 })
   level!: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
 
   /** Topic category for browsing (Travel, Business, Academic, Daily, Medical, etc.) */
   @Index()
-  @Column({ type: 'nvarchar', length: 50 })
+  @Column({ type: 'varchar', length: 50 })
   category!: string;
 
   /**
@@ -76,6 +76,6 @@ export class Vocabulary {
   @Column({ type: 'int', default: 5 })
   difficultyRating!: number;
 
-  @CreateDateColumn({ type: 'datetime2' })
+  @CreateDateColumn({ type: 'timestamptz' })
   readonly createdAt!: Date;
 }

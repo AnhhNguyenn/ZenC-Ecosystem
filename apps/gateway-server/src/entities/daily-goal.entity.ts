@@ -32,7 +32,7 @@ export class DailyGoal {
   @JoinColumn({ name: 'userId' })
   user!: User;
 
-  @Column({ type: 'uniqueidentifier' })
+  @Column({ type: 'uuid' })
   userId!: string;
 
   /** Date this goal applies to (DATE only, no timezone issues) */
@@ -52,7 +52,7 @@ export class DailyGoal {
   xpEarned!: number;
 
   /** Whether target was met today */
-  @Column({ type: 'bit', default: false })
+  @Column({ type: 'boolean', default: false })
   isCompleted!: boolean;
 
   /** Number of lessons completed today */
@@ -71,6 +71,6 @@ export class DailyGoal {
   @Column({ type: 'int', default: 0 })
   vocabReviews!: number;
 
-  @CreateDateColumn({ type: 'datetime2' })
+  @CreateDateColumn({ type: 'timestamptz' })
   readonly createdAt!: Date;
 }

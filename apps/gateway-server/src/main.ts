@@ -10,7 +10,9 @@ async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
-  app.set('trust proxy', 1);
+  
+  const httpAdapter = app.getHttpAdapter().getInstance();
+  httpAdapter.set('trust proxy', 1);
 
   initSentry({
     dsn: configService.get<string>('SENTRY_DSN'),

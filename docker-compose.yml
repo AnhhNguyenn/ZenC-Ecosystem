@@ -30,23 +30,23 @@ services:
       timeout: 5s
       retries: 5
 
-  sql-server:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+  postgres:
+    image: postgres:16-alpine
     restart: always
     environment:
-      SA_PASSWORD: "${MSSQL_SA_PASSWORD}"
-      ACCEPT_EULA: "Y"
-      MSSQL_DB: "${MSSQL_DATABASE:-zenc_ai}"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "${PG_PASSWORD}"
+      POSTGRES_DB: "${PG_DATABASE:-zenc_ai}"
     ports:
-      - "1433:1433"
+      - "5432:5432"
     volumes:
-      - mssql_data:/var/opt/mssql
+      - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: /opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P "$$SA_PASSWORD" -Q "SELECT 1" || exit 1
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
-      retries: 12
-      start_period: 45s
+      retries: 5
+      start_period: 10s
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -74,11 +74,11 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NODE_ENV=production
-      - MSSQL_HOST=sql-server
-      - MSSQL_PORT=1433
-      - MSSQL_DATABASE=${MSSQL_DATABASE:-zenc_ai}
-      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD}
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=postgres
+      - PG_DATABASE=${PG_DATABASE:-zenc_ai}
+      - PG_PASSWORD=${PG_PASSWORD}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
@@ -102,11 +102,10 @@ services:
       - AI_PROVIDER_CONNECT_TIMEOUT_MS=${AI_PROVIDER_CONNECT_TIMEOUT_MS:-10000}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-https://zenc.ai,https://admin.zenc.ai}
       - VOICE_ALLOWED_ORIGINS=${VOICE_ALLOWED_ORIGINS:-https://zenc.ai,https://admin.zenc.ai}
-      - DB_POOL_MIN=${DB_POOL_MIN:-5}
       - DB_POOL_MAX=${DB_POOL_MAX:-50}
       - GATEWAY_PORT=3000
     depends_on:
-      sql-server:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -128,10 +127,14 @@ services:
       - QDRANT_API_KEY=${QDRANT_API_KEY?QDRANT_API_KEY must be set}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_EMBEDDING_MODEL=${GEMINI_EMBEDDING_MODEL:-text-embedding-004}
-      - MSSQL_HOST=sql-server
-      - MSSQL_PORT=1433
-      - MSSQL_DATABASE=${MSSQL_DATABASE:-zenc_ai}
-      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID:-EXAVITQu4vr4xnSDxMaL}
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=postgres
+      - PG_DATABASE=${PG_DATABASE:-zenc_ai}
+      - PG_PASSWORD=${PG_PASSWORD}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-https://zenc.ai,https://admin.zenc.ai}
       - AI_PROVIDER_TIMEOUT_SECONDS=${AI_PROVIDER_TIMEOUT_SECONDS:-10}
       - DB_POOL_SIZE=${WORKER_DB_POOL_SIZE:-10}
@@ -143,7 +146,7 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_healthy
-      sql-server:
+      postgres:
         condition: service_healthy
 
   # ─── Frontend: Web User (Next.js) ────────────────────────────
@@ -151,12 +154,15 @@ services:
     build:
       context: ./apps/web-user
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-}
     restart: always
     ports:
       - "3001:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-}
-      - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-}
+      - NODE_ENV=production
     depends_on:
       - gateway-server
 
@@ -165,16 +171,18 @@ services:
     build:
       context: ./apps/web-admin
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
     restart: always
     ports:
       - "3002:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-}
+      - NODE_ENV=production
     depends_on:
       - gateway-server
       - ai-worker
 
 volumes:
   redis_data:
-  mssql_data:
+  pg_data:
   qdrant_storage:

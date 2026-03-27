@@ -20,12 +20,19 @@ export const VoiceVisualizer: React.FC<VoiceVisualizerProps> = ({ state, audioLe
     }
 
     const interval = setInterval(() => {
-      setBars(prev => prev.map(() => {
-        if (state === 'thinking') return 15 + Math.random() * 10;
+      const now = Date.now() / 1000;
+      setBars(prev => prev.map((_, i) => {
+        if (state === 'thinking') {
+          // Gentle pulsing wave for "thinking" state
+          return 12 + Math.sin(now * 3 + i * 0.5) * 5;
+        }
+        // Drive bars from real audio level with organic wave offset
+        const wave = Math.sin(now * 4 + i * 0.8) * 0.3 + 0.7;
+        const base = 10;
         const multiplier = state === 'speaking' || state === 'listening' ? 50 : 20;
-        return 10 + Math.random() * multiplier * (audioLevel + 0.5);
+        return base + multiplier * audioLevel * wave;
       }));
-    }, 100);
+    }, 80);
 
     return () => clearInterval(interval);
   }, [state, audioLevel]);

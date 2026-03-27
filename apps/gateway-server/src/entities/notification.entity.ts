@@ -40,10 +40,10 @@ export class Notification {
   @JoinColumn({ name: 'userId' })
   user!: User;
 
-  @Column({ type: 'uniqueidentifier' })
+  @Column({ type: 'uuid' })
   userId!: string;
 
-  @Column({ type: 'nvarchar', length: 30 })
+  @Column({ type: 'varchar', length: 30 })
   type!:
     | 'STREAK_WARNING'
     | 'DAILY_REMINDER'
@@ -53,32 +53,32 @@ export class Notification {
     | 'LEVEL_UP'
     | 'SYSTEM';
 
-  @Column({ type: 'nvarchar', length: 255 })
+  @Column({ type: 'varchar', length: 255 })
   title!: string;
 
-  @Column({ type: 'nvarchar', length: 1000 })
+  @Column({ type: 'varchar', length: 1000 })
   body!: string;
 
   /** Optional deep-link URL for navigation on tap */
-  @Column({ type: 'nvarchar', length: 500, nullable: true })
+  @Column({ type: 'varchar', length: 500, nullable: true })
   actionUrl!: string | null;
 
   /** Optional icon override (default uses type-specific icons) */
-  @Column({ type: 'nvarchar', length: 500, nullable: true })
+  @Column({ type: 'varchar', length: 500, nullable: true })
   iconUrl!: string | null;
 
-  @Column({ type: 'bit', default: false })
+  @Column({ type: 'boolean', default: false })
   isRead!: boolean;
 
   /** When the notification was displayed/delivered to the user */
-  @Column({ type: 'datetime2', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   deliveredAt!: Date | null;
 
   /** Scheduled delivery time; null = deliver immediately */
-  @Column({ type: 'datetime2', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   scheduledAt!: Date | null;
 
   @Index()
-  @CreateDateColumn({ type: 'datetime2' })
+  @CreateDateColumn({ type: 'timestamptz' })
   readonly createdAt!: Date;
 }

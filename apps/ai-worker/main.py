@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from config import get_settings
 from events.pubsub_listener import pubsub_listener
+from rabbitmq_consumer import rabbitmq_consumer
 from rag.rag_router import router as rag_router
 from rag.rag_service import rag_service
 from services.content_recommender import cache_recommendations
@@ -162,6 +163,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "qdrant": False,
             "pubsub": False,
             "scheduler": False,
+            "rabbitmq": False,
         }
     )
 
@@ -192,6 +194,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("Redis Pub/Sub listener started")
     except Exception as exc:
         logger.error("Pub/Sub listener failed to start: %s", exc)
+
+    try:
+        await rabbitmq_consumer.start()
+        component_status["rabbitmq"] = True
+        logger.info("RabbitMQ Consumer started")
+    except Exception as exc:
+        logger.error("RabbitMQ Consumer failed to start: %s", exc)
 
     try:
         scheduler.add_job(
@@ -288,6 +297,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("Pub/Sub listener stopped")
     except Exception as exc:
         logger.error("Error stopping Pub/Sub listener: %s", exc)
+
+    try:
+        await rabbitmq_consumer.stop()
+        component_status["rabbitmq"] = False
+        logger.info("RabbitMQ Consumer stopped")
+    except Exception as exc:
+        logger.error("Error stopping RabbitMQ Consumer: %s", exc)
 
     if redis_client:
         await redis_client.close()

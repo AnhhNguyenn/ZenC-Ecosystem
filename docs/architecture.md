@@ -24,3 +24,78 @@ Welcome to the ZenC Ecosystem frontend project. To maintain a $10M+ SaaS-grade a
 - **Layered Error Boundaries:** `AppErrorBoundary` -> `LayoutErrorBoundary` -> `FeatureErrorBoundary`. A crashing widget should never crash the page.
 
 If you don't know, ask. Don't break the architecture.
+
+---
+
+## 3. Backend Architecture (NestJS Gateway)
+
+### 3.1 Dual-Brain Pedagogical System
+
+Hai AI provider chạy song song, phân vai rõ ràng:
+
+| Provider | Vai trò | Khi nào kích hoạt |
+|----------|---------|------------------|
+| **Gemini Live** (Alex) | Hội thoại tự nhiên, phát âm, giao tiếp thông thường | Mặc định |
+| **OpenAI Realtime** (Sarah) | Giảng giải ngữ pháp sâu, phân tích lỗi sai | Failover khi Gemini lỗi |
+| **Deep Brain** (LLama-3 via Groq) | Phân loại intent `STUDY` vs `CHAT` trước khi route | Mỗi transcript đủ độ dài |
+
+**Intent Classification flow:**
+```
+User speaks → STT → classifyIntent() [Groq, <1500ms] → CHAT (Gemini) or STUDY (Deep Brain queue)
+```
+
+### 3.2 RabbitMQ — Queue Architecture (Phase G)
+
+**Cấm dùng Redis làm queue!** Redis chỉ được phép dùng cho:
+- Rate Limiting (`INCR` + `EXPIRE`)
+- Session lookup O(1) (`HSET`/`HGET`)
+- User Profile cache (TTL 24h)
+- Socket.io multi-pod Pub/Sub adapter
+
+**RabbitMQ queues (durable: true):**
+
+| Queue | Publisher | Consumer | Nội dung |
+|-------|-----------|----------|---------|
+| `deep_brain_tasks` | `VoiceGateway` (NestJS) | `RabbitMQConsumer` (Python) | `{sessionId, userId, question, taskType}` |
+| `post_session_eval` | `VoiceGateway` (NestJS) | `RabbitMQConsumer` (Python) | Full transcript để chấm điểm cuối buổi |
+
+**Retry strategy:** `nack(requeue=True)` on failure → tự động requeue. Dead Letter Queue (DLQ) cần setup thêm nếu muốn giới hạn retry count.
+
+### 3.3 WebSocket Event Handlers (voice.gateway.ts)
+
+Tất cả `@SubscribeMessage` handlers phải có:
+```typescript
+if (!data) return;                    // Null guard — bắt buộc
+try { ... } catch (err) { ... }       // Crash isolation — bắt buộc
+```
+
+### 3.4 Provider Failover Rules
+
+- Max **2 lần** switch Gemini ↔ OpenAI per session (`switchAttempts` map).
+- Mutex guard `isSwitching` ngăn concurrent duplicate failover.
+- Failover inject **20 dòng transcript gần nhất** từ Redis để AI mới không mất context.
+
+### 3.5 Security Rules (Phase F)
+
+- **JWT Refresh Token**: `crypto.sha256(token)` → `bcrypt.hash()`. KHÔNG bao giờ bcrypt raw JWT (truncation attack).
+- **Session cleanup**: Cron mỗi giờ xóa sessions có `endTime IS NULL` và `startTime < 2h trước` (zombie sessions).
+- **Audio limits**: Tối đa `4KB / 15 EPS` per socket. Vượt quá → kill connection.
+- **Deep Brain queue cap**: `LTRIM` giới hạn 10,000 tasks trong Redis (legacy) / RabbitMQ tự quản lý.
+
+---
+
+## 4. Kubernetes Production Layout (Phase G)
+
+```
+k8s/
+├── 01-namespaces.yaml       # zenc-production, zenc-monitoring
+├── 04-api-deployment.yaml   # api-pool: 100–300 pods, 1 vCPU limit
+├── 05-worker-deployment.yaml # worker-pool: 50–200 pods
+├── 06-ai-deployment.yaml    # ai-gpu-pool: NVIDIA GPU, 32Gi RAM
+├── 08-hpa.yaml              # HPA: CPU + RMQ queue depth metrics
+├── 09-ingress.yaml          # NGINX: 50 RPS, 15s timeout, circuit breaker
+└── 10-pgbouncer.yaml        # PgBouncer: 5000 clients → 100 PG connections
+```
+
+**Multi-Region Failover:** Việt Nam → Singapore → Tokyo (Cloudflare DNS, 60s TTL)
+

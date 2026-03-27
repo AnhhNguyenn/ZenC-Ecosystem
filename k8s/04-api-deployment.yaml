@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zenc-api-gateway
+  namespace: zenc-production
+spec:
+  replicas: 10 # Initial replica, HPA dynamically scales to 300
+  selector:
+    matchLabels:
+      app: zenc-api
+  template:
+    metadata:
+      labels:
+        app: zenc-api
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: zenc-node-pool
+                operator: In
+                values:
+                - api-pool
+      containers:
+      - name: gateway-server
+        image: zenc-gateway:latest
+        ports:
+        - containerPort: 3000
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+        readinessProbe: # K8s Disaster Recovery Probe
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 20
+          periodSeconds: 15
+        envFrom:
+        - secretRef:
+            name: zenc-secrets-prod
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zenc-api-service
+  namespace: zenc-production
+spec:
+  type: ClusterIP
+  selector:
+    app: zenc-api
+  ports:
+  - port: 80
+    targetPort: 3000

@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_PASSWORD: str = ""
 
+    RABBITMQ_URL: str = "amqp://guest:guest@localhost:5672/"
+
     QDRANT_HOST: str = "localhost"
     QDRANT_PORT: int = 6333
     QDRANT_COLLECTION: str = "zenc_curriculum"

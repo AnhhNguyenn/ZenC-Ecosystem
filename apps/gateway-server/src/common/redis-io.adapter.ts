@@ -8,6 +8,10 @@ export class RedisIoAdapter extends IoAdapter {
   private readonly logger = new Logger(RedisIoAdapter.name);
   private adapterConstructor!: ReturnType<typeof createAdapter>;
 
+  constructor(appParam: any, private readonly corsOptions: any) {
+    super(appParam);
+  }
+
   async connectToRedis(redisUrl: string): Promise<void> {
     const pubClient = createClient({ url: redisUrl });
     const subClient = pubClient.duplicate();
@@ -25,7 +29,11 @@ export class RedisIoAdapter extends IoAdapter {
   }
 
   createIOServer(port: number, options?: ServerOptions): any {
-    const server = super.createIOServer(port, options);
+    const mergedOptions: any = {
+        ...options,
+        cors: this.corsOptions,
+    };
+    const server = super.createIOServer(port, mergedOptions);
     server.adapter(this.adapterConstructor);
     return server;
   }

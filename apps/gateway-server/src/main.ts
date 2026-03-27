@@ -25,7 +25,19 @@ async function bootstrap(): Promise<void> {
     defaultVersion: '1',
   });
 
-  const redisIoAdapter = new RedisIoAdapter(app);
+  const configuredOrigins = configService.get<string>(
+    'CORS_ALLOWED_ORIGINS',
+    'http://localhost:3001,http://localhost:3002',
+  );
+  const corsOrigins = configuredOrigins
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  const corsOptions = { origin: corsOrigins, credentials: true };
+  app.enableCors(corsOptions);
+
+  const redisIoAdapter = new RedisIoAdapter(app, corsOptions);
   const redisHost = configService.get<string>('REDIS_HOST', 'localhost');
   const redisPort = configService.get<string>('REDIS_PORT', '6379');
   const redisPassword = configService.get<string>('REDIS_PASSWORD', '');
@@ -45,20 +57,6 @@ async function bootstrap(): Promise<void> {
   );
 
   app.useGlobalFilters(new GlobalExceptionFilter());
-
-  const configuredOrigins = configService.get<string>(
-    'CORS_ALLOWED_ORIGINS',
-    'http://localhost:3001,http://localhost:3002',
-  );
-  const corsOrigins = configuredOrigins
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean);
-
-  app.enableCors({
-    origin: corsOrigins,
-    credentials: true,
-  });
 
   const port = configService.get<string>('GATEWAY_PORT', '3000');
   await app.listen(port);

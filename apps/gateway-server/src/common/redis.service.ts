@@ -169,7 +169,11 @@ export class RedisService implements OnModuleDestroy {
    */
   async enqueueDurableEvent(eventName: string, message: string): Promise<void> {
     try {
-      await this.client.lpush(this.getDurableQueueKey(eventName), message);
+      const key = this.getDurableQueueKey(eventName);
+      const pipeline = this.client.pipeline();
+      pipeline.lpush(key, message);
+      pipeline.ltrim(key, 0, 9999); // Max size 10000 to prevent OOM
+      await pipeline.exec();
       this.logger.debug(`Queued durable event ${eventName}`);
     } catch (error) {
       this.logger.error(`Failed to queue durable event ${eventName}`, error);

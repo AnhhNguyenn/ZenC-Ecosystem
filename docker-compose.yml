@@ -21,7 +21,7 @@ services:
       --maxmemory ${REDIS_MAXMEMORY:-256mb}
       --maxmemory-policy ${REDIS_MAXMEMORY_POLICY:-allkeys-lru}
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -38,7 +38,7 @@ services:
       POSTGRES_PASSWORD: "${PG_PASSWORD}"
       POSTGRES_DB: "${PG_DATABASE:-zenc_ai}"
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -61,6 +61,23 @@ services:
           "CMD-SHELL",
           "curl -fsS -H \"api-key: $$QDRANT__SERVICE__API_KEY\" http://localhost:6333/healthz || exit 1",
         ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    restart: always
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -104,10 +121,13 @@ services:
       - VOICE_ALLOWED_ORIGINS=${VOICE_ALLOWED_ORIGINS:-https://zenc.ai,https://admin.zenc.ai}
       - DB_POOL_MAX=${DB_POOL_MAX:-50}
       - GATEWAY_PORT=3000
+      - RABBITMQ_URL=${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
 
   # ─── Backend: AI Worker (Python/FastAPI) ─────────────────────
@@ -141,12 +161,15 @@ services:
       - DB_MAX_OVERFLOW=${WORKER_DB_MAX_OVERFLOW:-20}
       - DB_POOL_TIMEOUT=${WORKER_DB_POOL_TIMEOUT:-30}
       - WORKER_PORT=8000
+      - RABBITMQ_URL=${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
     depends_on:
       redis:
         condition: service_healthy
       qdrant:
         condition: service_healthy
       postgres:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
 
   # ─── Frontend: Web User (Next.js) ────────────────────────────
@@ -186,3 +209,4 @@ volumes:
   redis_data:
   pg_data:
   qdrant_storage:
+  rabbitmq_data:

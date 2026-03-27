@@ -1,0 +1,44 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: zenc-api-hpa
+  namespace: zenc-production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: zenc-api-gateway
+  minReplicas: 100
+  maxReplicas: 300
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: zenc-worker-hpa
+  namespace: zenc-production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: zenc-ai-worker
+  minReplicas: 50
+  maxReplicas: 200
+  metrics:
+  # Requires KEDA or Prometheus Adapter for external RabbitMQ metric
+  - type: External
+    external:
+      metric:
+        name: rabbitmq_queue_length
+        selector:
+          matchLabels:
+            queue_name: deep_brain_tasks
+      target:
+        type: AverageValue
+        value: 10

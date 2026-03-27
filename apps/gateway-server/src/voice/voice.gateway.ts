@@ -8,6 +8,7 @@ import {
   MessageBody,
 } from '@nestjs/websockets';
 import { Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -18,20 +19,14 @@ import { GeminiService } from './gemini.service';
 import { OpenAIRealtimeService } from './openai-realtime.service';
 import { RedisService } from '../common/redis.service';
 import { CircuitBreaker } from './circuit-breaker';
+import { RabbitMQService } from '../common/rabbitmq.service';
 import { TtsService } from './tts.service';
 import { User } from '../entities/user.entity';
 import { UserProfile } from '../entities/user-profile.entity';
 import { Session } from '../entities/session.entity';
 import { JwtPayload } from '../auth/auth.dto';
 
-const voiceAllowedOrigins = (
-  process.env.VOICE_ALLOWED_ORIGINS ||
-  process.env.CORS_ALLOWED_ORIGINS ||
-  'http://localhost:3001,http://localhost:3002'
-)
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+
 
 /**
  * VoiceGateway v3.0 – Dual AI Engine + Conversation Modes
@@ -54,7 +49,6 @@ const voiceAllowedOrigins = (
  * - TOPIC_DISCUSSION: Guided topic-based conversation
  */
 @WebSocketGateway({
-  cors: { origin: voiceAllowedOrigins, credentials: true },
   namespace: '/voice',
   transports: ['websocket'],
   pingInterval: 25000,
@@ -65,15 +59,14 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   server!: Server;
 
   private readonly logger = new Logger(VoiceGateway.name);
-  private readonly MAX_AUDIO_CHUNK_BYTES = 64 * 1024;
-  private readonly MAX_AUDIO_EVENTS_PER_SECOND = 40;
+  private readonly MAX_AUDIO_CHUNK_BYTES = 4096; // Slashed from 64KB
+  private readonly MAX_AUDIO_EVENTS_PER_SECOND = 15; // Slashed from 40
 
   // ── Session tracking maps ─────────────────────────────────────
   private readonly jitterBuffers = new Map<string, Buffer[]>();
   private readonly JITTER_BUFFER_SIZE = 3;
   private readonly socketSessions = new Map<string, string>();
   private readonly socketUsers = new Map<string, string>();
-  private readonly sessionTranscripts = new Map<string, string[]>();
   private readonly dbSessionIds = new Map<string, string>();
   // sessionTokenCounts: REMOVED – now stored in Redis (session_billing:{sessionId})
   private readonly sessionTokenBudgets = new Map<string, number>();
@@ -97,11 +90,13 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   /** Maps socketId → real-time correction enabled flag */
   private readonly correctionEnabled = new Map<string, boolean>();
   /** Maps socketId → user transcript accumulator (from user speech) */
-  private readonly userTranscripts = new Map<string, string[]>();
   private readonly socketAudioEventCounts = new Map<
     string,
     { bucket: number; count: number }
   >();
+
+  private readonly switchAttempts = new Map<string, number>();
+  private readonly isSwitching = new Set<string>();
 
   // ── Circuit Breaker: per-provider failure tracking ──────────
   private readonly geminiBreaker = new CircuitBreaker('gemini', {
@@ -119,6 +114,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly geminiService: GeminiService,
     private readonly openaiService: OpenAIRealtimeService,
     private readonly redis: RedisService,
+    private readonly rabbitmq: RabbitMQService,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
     @InjectRepository(User)
@@ -259,8 +255,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const systemPrompt = this.buildAdaptivePrompt(profile, 'FREE_TALK');
       const sessionId = `${userId}_${Date.now()}`;
       this.socketSessions.set(client.id, sessionId);
-      this.sessionTranscripts.set(client.id, []);
-      this.userTranscripts.set(client.id, []);
       // sessionTokenCounts: billing starts at 0 in Redis automatically on first HINCRBY
       this.sessionTokenBudgets.set(client.id, dbUser.tokenBalance);
       this.socketTokenVersions.set(client.id, payload.tokenVersion ?? 0);
@@ -403,7 +397,10 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     emitter.on('textResponse', (text: string) => {
       client.emit('ai_transcript', { text });
 
-      this.appendTranscriptLine(this.sessionTranscripts, client.id, `AI: ${text}`);
+      const sid = this.socketSessions.get(client.id);
+      if (sid) {
+        this.redis.appendTranscriptLine(sid, 'ai', text).catch(e => this.logger.error(e));
+      }
 
       // Trigger real-time grammar check on user's recent text if enabled
       if (this.correctionEnabled.get(client.id)) {
@@ -411,16 +408,18 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
     });
 
-    emitter.on('userTranscript', (text: string) => {
-      this.appendTranscriptLine(this.userTranscripts, client.id, text);
-      this.appendTranscriptLine(this.sessionTranscripts, client.id, `User: ${text}`);
+    emitter.on('userTranscript', async (text: string) => {
+      const sid = this.socketSessions.get(client.id);
+      if (sid) {
+        this.redis.appendTranscriptLine(sid, 'user', text).catch(e => this.logger.error(e));
+      }
 
       // ── COGNITIVE ROUTING (Handover to Deep Brain) ──
-      const complexGrammarRegex = /(tại sao|giải thích|phân biệt|ngữ pháp|khác nhau|cách dùng|vì sao|nghĩa là gì)/i;
       const sessionId = this.socketSessions.get(client.id);
       const userId = this.socketUsers.get(client.id);
       
-      if (sessionId && userId && complexGrammarRegex.test(text)) {
+      const isGrammarIntent = await this.classifyIntent(text);
+      if (sessionId && userId && isGrammarIntent) {
         this.logger.log(`[Cognitive Routing] Intercepted complex grammar question from ${client.id}: ${text}`);
         
         // Anti-Spam Cooldown (Phase D: Limit ElevenLabs cost)
@@ -448,14 +447,14 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
               );
             }
 
-            // 2. Dispatch to Deep Brain via Durable Queue
-            void this.redis.client.lpush('durable_queue:deep_brain_tasks', JSON.stringify({
+            // 2. Dispatch to Deep Brain via Durable Queue (RabbitMQ Phase G)
+            void this.rabbitmq.dispatchDeepBrainTask({
               sessionId,
               userId,
               taskType: 'grammar_explanation',
               originalText: text,
               question: text
-            }));
+            });
           }
         }).catch((err) => this.logger.error('Cooldown check failed', err));
       }
@@ -496,74 +495,143 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
    * If both fail → emit text-only fallback.
    */
   private async attemptProviderSwitch(client: Socket): Promise<void> {
-    const currentProvider = this.socketProviders.get(client.id);
-    const sessionId = this.socketSessions.get(client.id);
-    const userId = this.socketUsers.get(client.id);
+    if (this.isSwitching.has(client.id)) return;
+    this.isSwitching.add(client.id);
 
-    if (!sessionId || !userId) return;
+    try {
+      const currentProvider = this.socketProviders.get(client.id);
+      const sessionId = this.socketSessions.get(client.id);
+      const userId = this.socketUsers.get(client.id);
 
-    const newProvider =
-      currentProvider === 'gemini' ? 'openai' : 'gemini';
+      if (!sessionId || !userId) return;
 
-    const isNewProviderHealthy =
-      newProvider === 'gemini'
-        ? this.geminiService.isHealthy()
-        : this.openaiService.isHealthy();
+      const attempts = this.switchAttempts.get(client.id) || 0;
+      if (attempts >= 2) {
+        this.logger.error(`Max provider switch attempts reached for ${client.id}`);
+        client.emit('error', {
+          message: 'Voice mode unavailable after multiple retries. Switching to text mode.',
+          code: 'VOICE_FALLBACK',
+        });
+        return;
+      }
+      this.switchAttempts.set(client.id, attempts + 1);
 
-    if (!isNewProviderHealthy) {
-      this.logger.error(
-        `Both providers exhausted for ${client.id}, falling back to text`,
+      const newProvider =
+        currentProvider === 'gemini' ? 'openai' : 'gemini';
+
+      const isNewProviderHealthy =
+        newProvider === 'gemini'
+          ? this.geminiService.isHealthy()
+          : this.openaiService.isHealthy();
+
+      if (!isNewProviderHealthy) {
+        this.logger.error(
+          `Both providers exhausted for ${client.id}, falling back to text`,
+        );
+        client.emit('error', {
+          message: 'Voice mode unavailable. Switching to text mode.',
+          code: 'VOICE_FALLBACK',
+        });
+        return;
+      }
+
+      this.logger.warn(
+        `Switching provider for ${client.id}: ${currentProvider} → ${newProvider}`,
       );
-      client.emit('error', {
-        message: 'Voice mode unavailable. Switching to text mode.',
-        code: 'VOICE_FALLBACK',
+
+      // Close old provider session
+      if (currentProvider === 'gemini') {
+        this.geminiService.closeSession(sessionId);
+      } else {
+        this.openaiService.closeSession(sessionId);
+      }
+
+      // Remove old emitter listeners
+      const oldEmitter = this.socketEmitters.get(client.id);
+      if (oldEmitter) oldEmitter.removeAllListeners();
+
+      // Load profile for rebuilding system prompt
+      const profile = await this.redis.getCachedUserProfile(userId);
+      const mode = this.socketModes.get(client.id) || 'FREE_TALK';
+      let systemPrompt = this.buildAdaptivePrompt(
+        profile || { currentLevel: 'A1', confidenceScore: '0.5', vnSupportEnabled: 'true', tier: 'FREE' },
+        mode,
+      );
+
+      // Restore short-term memory transcript from Redis
+      const transcriptEntries = await this.redis.getFullTranscript(sessionId);
+      if (transcriptEntries && transcriptEntries.length > 0) {
+        const recentContext = transcriptEntries
+          .slice(-20)
+          .map((entry) => `${entry.role === 'ai' ? 'Teacher' : 'Student'} (${new Date(entry.ts).toISOString()}): ${entry.text}`)
+          .join('\n');
+        systemPrompt += `\n\n=== RECENT CONTEXT (Resume from here) ===\n${recentContext}`;
+      }
+
+      // Create new session with fallback provider
+      const newSessionId = `${sessionId}_retry_${newProvider}`;
+      const newEmitter = this.createAISession(
+        newProvider,
+        newSessionId,
+        systemPrompt,
+      );
+
+      this.socketProviders.set(client.id, newProvider);
+      this.socketSessions.set(client.id, newSessionId);
+      this.socketEmitters.set(client.id, newEmitter);
+      this.bindEmitterEvents(client, newEmitter, newProvider);
+
+      client.emit('provider_switched', {
+        from: currentProvider,
+        to: newProvider,
+        message: `Switched to ${newProvider === 'gemini' ? 'Gemini 2.5 Flash' : 'OpenAI Realtime'} for better stability.`,
       });
-      return;
+    } finally {
+      this.isSwitching.delete(client.id);
     }
-
-    this.logger.warn(
-      `Switching provider for ${client.id}: ${currentProvider} → ${newProvider}`,
-    );
-
-    // Close old provider session
-    if (currentProvider === 'gemini') {
-      this.geminiService.closeSession(sessionId);
-    } else {
-      this.openaiService.closeSession(sessionId);
-    }
-
-    // Remove old emitter listeners
-    const oldEmitter = this.socketEmitters.get(client.id);
-    if (oldEmitter) oldEmitter.removeAllListeners();
-
-    // Load profile for rebuilding system prompt
-    const profile = await this.redis.getCachedUserProfile(userId);
-    const mode = this.socketModes.get(client.id) || 'FREE_TALK';
-    const systemPrompt = this.buildAdaptivePrompt(
-      profile || { currentLevel: 'A1', confidenceScore: '0.5', vnSupportEnabled: 'true', tier: 'FREE' },
-      mode,
-    );
-
-    // Create new session with fallback provider
-    const newSessionId = `${sessionId}_retry_${newProvider}`;
-    const newEmitter = this.createAISession(
-      newProvider,
-      newSessionId,
-      systemPrompt,
-    );
-
-    this.socketProviders.set(client.id, newProvider);
-    this.socketSessions.set(client.id, newSessionId);
-    this.socketEmitters.set(client.id, newEmitter);
-    this.bindEmitterEvents(client, newEmitter, newProvider);
-
-    client.emit('provider_switched', {
-      from: currentProvider,
-      to: newProvider,
-      message: `Switched to ${newProvider === 'gemini' ? 'Gemini 2.5 Flash' : 'OpenAI Realtime'} for better stability.`,
-    });
   }
 
+  /**
+   * Phase F: Evaluate user transcript intent via Groq (Llama 3)
+   * Returns true if user wants a complex grammar/vocabulary explanation.
+   */
+  private async classifyIntent(text: string): Promise<boolean> {
+    try {
+      const apiKey = this.config.get<string>('GROQ_API_KEY');
+      if (!apiKey) return /(tại sao|giải thích|phân biệt|ngữ pháp|khác nhau|cách dùng|vì sao|nghĩa là gì)/i.test(text);
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 1500);
+
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'llama3-8b-8192',
+          messages: [
+            { role: 'system', content: 'You are an intent classifier. Determine if the user is asking a complex grammar question, asking for vocabulary meaning, or asking "why" something is right/wrong in English. Reply exactly with "GRAMMAR" if yes, or "CHAT" if it is just normal conversational talk.' },
+            { role: 'user', content: text }
+          ],
+          temperature: 0,
+          max_tokens: 10
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+
+      if (!response.ok) return /(tại sao|giải thích|phân biệt|ngữ pháp|khác nhau|cách dùng|vì sao|nghĩa là gì)/i.test(text);
+
+      const data = await response.json();
+      const intent = data.choices?.[0]?.message?.content?.trim().toUpperCase();
+      return intent?.includes('GRAMMAR') ?? false;
+    } catch (e) {
+      this.logger.error(`Intent classification failed: ${(e as Error).message}`);
+      return /(tại sao|giải thích|phân biệt|ngữ pháp|khác nhau|cách dùng|vì sao|nghĩa là gì)/i.test(text);
+    }
+  }
   // ═══════════════════════════════════════════════════════════════
   // AUDIO HANDLING
   // ═══════════════════════════════════════════════════════════════
@@ -577,6 +645,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: Buffer,
   ): Promise<void> {
+    if (!data) return;
     try {
       const sessionId = this.socketSessions.get(client.id);
       if (!sessionId) {
@@ -656,6 +725,17 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
    * Switch conversation mode mid-session.
    *
    * Supported modes:
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // CONVERSATION MODE MANAGEMENT
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Switch conversation mode mid-session.
+   *
+   * Supported modes:
    * - FREE_TALK: Open conversation
    * - ROLE_PLAY: Interactive scenario (requires scenarioId)
    * - SHADOWING: AI speaks reference → user repeats
@@ -673,7 +753,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       bytesPerSample?: number;
     },
   ): void {
-    const sampleRate = Math.max(
+    if (!data) return;
+    try {
+      const sampleRate = Math.max(
       8000,
       Math.min(96000, Math.trunc(data?.sampleRate ?? 16000)),
     );
@@ -688,6 +770,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       channels,
       bytesPerSample,
     });
+    } catch (e) { this.logger.error('Audio config error', (e as Error).stack); }
   }
 
   @SubscribeMessage('switch_mode')
@@ -700,6 +783,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       topicId?: string;
     },
   ): Promise<void> {
+    if (!data || !data.mode) return;
     try {
       const validModes = [
         'FREE_TALK',
@@ -744,6 +828,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const provider = this.socketProviders.get(client.id);
       if (provider === 'openai') {
         this.openaiService.sendTextPrompt(sessionId, systemPrompt);
+
+
       } else {
         this.geminiService.sendTextPrompt(sessionId, systemPrompt);
       }
@@ -776,6 +862,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       difficulty?: string;
     },
   ): Promise<void> {
+    if (!data || !data.scenarioId) return;
     try {
       const sessionId = this.socketSessions.get(client.id);
       const userId = this.socketUsers.get(client.id);
@@ -820,8 +907,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { enabled: boolean },
   ): void {
-    this.correctionEnabled.set(client.id, data.enabled);
-    client.emit('correction_toggled', { enabled: data.enabled });
+    if (!data || typeof data.enabled !== 'boolean') return;
+    try {
+      this.correctionEnabled.set(client.id, data.enabled);
+      client.emit('correction_toggled', { enabled: data.enabled });
+    } catch (e) { this.logger.error('Correction toggle error', (e as Error).stack); }
   }
 
   /**
@@ -860,8 +950,18 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (enabled !== 'true') return;
 
       const userId = this.socketUsers.get(client.id);
-      const userLines = this.userTranscripts.get(client.id) || [];
-      const lastSentence = userLines[userLines.length - 1] || '';
+      const sessionId = this.socketSessions.get(client.id);
+      if (!sessionId) return;
+      const tEntries = await this.redis.getFullTranscript(sessionId);
+      if (!tEntries || tEntries.length === 0) return;
+      
+      let lastSentence = '';
+      for (let i = tEntries.length - 1; i >= 0; i--) {
+        if (tEntries[i].role === 'user') {
+          lastSentence = tEntries[i].text;
+          break;
+        }
+      }
 
       if (lastSentence.length < 5) return;
 
@@ -880,6 +980,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const pollIntervals = [100, 200, 400, 800, 1600];
       let attempt = 0;
       const pollForResult = async (): Promise<void> => {
+        if (!client.connected) return; // Prevent memory leak when client disconnects
         if (attempt >= pollIntervals.length) return;
         try {
           const result = await this.redis.get(correctionId);
@@ -917,7 +1018,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       const userId = this.socketUsers.get(client.id);
       const sessionId = this.socketSessions.get(client.id);
-      const transcript = this.getTranscriptText(this.sessionTranscripts, client.id);
+      let transcript = '';
+      if (sessionId) {
+        const tEntries = await this.redis.getFullTranscript(sessionId);
+        if (tEntries) transcript = tEntries.map(e => `${e.role === 'ai' ? 'AI' : 'User'}: ${e.text}`).join('\n');
+      }
       const mode = this.socketModes.get(client.id) || 'FREE_TALK';
       const startTime = this.sessionStartTimes.get(client.id) || Date.now();
       const durationMinutes = (Date.now() - startTime) / 60000;
@@ -953,22 +1058,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   // TOKEN TRACKING
   // ═══════════════════════════════════════════════════════════════
 
-  private appendTranscriptLine(
-    target: Map<string, string[]>,
-    socketId: string,
-    line: string,
-  ): void {
-    const current = target.get(socketId) || [];
-    current.push(line);
-    target.set(socketId, current);
-  }
 
-  private getTranscriptText(
-    target: Map<string, string[]>,
-    socketId: string,
-  ): string {
-    return (target.get(socketId) || []).join('\n');
-  }
+
+
 
   private allowAudioEvent(socketId: string): boolean {
     const currentBucket = Math.floor(Date.now() / 1000);
@@ -1065,8 +1157,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return true;
       }
 
-      const reservationSucceeded = await this.reserveTokensForUsage(
-        userId,
+      const reservationSucceeded = this.reserveTokensForUsage(
+        client,
         safeTokens,
       );
       if (!reservationSucceeded) {
@@ -1080,13 +1172,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return true;
       }
 
-      const remainingBudget = this.sessionTokenBudgets.get(client.id);
-      if (remainingBudget !== undefined) {
-        this.sessionTokenBudgets.set(
-          client.id,
-          Math.max(0, remainingBudget - safeTokens),
-        );
-      }
+      // In-memory deduction is handled within reserveTokensForUsage
 
       // Store billing in Redis (distributed, crash-safe)
       const sessionId = this.socketSessions.get(client.id);
@@ -1103,24 +1189,18 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  private async reserveTokensForUsage(
-    userId: string,
+  private reserveTokensForUsage(
+    client: Socket,
     tokens: number,
-  ): Promise<boolean> {
+  ): boolean {
     const safeTokens = Math.max(1, Math.trunc(tokens));
-    const result = await this.userRepo
-      .createQueryBuilder()
-      .update(User)
-      .set({
-        tokenBalance: () => `tokenBalance - ${safeTokens}`,
-      })
-      .where('id = :id', { id: userId })
-      .andWhere('isDeleted = :isDeleted', { isDeleted: false })
-      .andWhere('status = :status', { status: 'ACTIVE' })
-      .andWhere('tokenBalance >= :tokens', { tokens: safeTokens })
-      .execute();
-
-    return (result.affected ?? 0) > 0;
+    const currentBudget = this.sessionTokenBudgets.get(client.id);
+    
+    if (currentBudget !== undefined && currentBudget >= safeTokens) {
+      this.sessionTokenBudgets.set(client.id, currentBudget - safeTokens);
+      return true;
+    }
+    return false;
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -1134,7 +1214,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const sessionId = this.socketSessions.get(client.id);
     const userId = this.socketUsers.get(client.id);
     const dbSessionId = this.dbSessionIds.get(client.id);
-    const transcript = this.getTranscriptText(this.sessionTranscripts, client.id);
+    let transcript = '';
+    if (sessionId) {
+      const tEntries = await this.redis.getFullTranscript(sessionId);
+      if (tEntries) transcript = tEntries.map(e => `${e.role === 'ai' ? 'AI' : 'User'}: ${e.text}`).join('\n');
+    }
     // Read billing from Redis (distributed, crash-safe)
     const tokensUsed = sessionId
       ? await this.redis.getSessionTokens(sessionId)
@@ -1192,14 +1276,19 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
     }
 
-    // 4. Token balance was reserved incrementally while streaming.
+    // 4. Batch update user token balance
+    if (userId && tokensUsed > 0) {
+      try {
+        await this.userRepo.decrement({ id: userId }, 'tokenBalance', tokensUsed);
+      } catch (error) {
+        this.logger.error(`Failed to batch decrement tokens for user ${userId}: ${(error as Error).message}`);
+      }
+    }
 
     // 5. Clean up all tracking maps
     this.socketSessions.delete(client.id);
     this.socketUsers.delete(client.id);
     this.jitterBuffers.delete(client.id);
-    this.sessionTranscripts.delete(client.id);
-    this.userTranscripts.delete(client.id);
     this.dbSessionIds.delete(client.id);
     // Clean up Redis billing key after DB commit
     if (sessionId) {
@@ -1569,5 +1658,35 @@ You are now acting in this scenario. Set the scene briefly, then start the conve
     const bytesPerSecond =
       config.sampleRate * config.channels * config.bytesPerSample;
     return Math.max(32000, bytesPerSecond);
+  }
+  // ═══════════════════════════════════════════════════════════════
+  // ZOMBIE SESSION CLEANUP (F5)
+  // ═══════════════════════════════════════════════════════════════
+  @Cron(CronExpression.EVERY_HOUR)
+  async cleanupZombieSessions() {
+    this.logger.log('Running Zombie Session Cleanup...');
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    
+    try {
+      const zombies = await this.sessionRepo
+        .createQueryBuilder('session')
+        .where('session.endTime IS NULL')
+        .andWhere('session.startTime < :twoHoursAgo', { twoHoursAgo })
+        .getMany();
+
+      if (zombies.length > 0) {
+        this.logger.warn(`Found ${zombies.length} zombie sessions. Force-closing them.`);
+        const ids = zombies.map(z => z.id);
+        
+        await this.sessionRepo
+          .createQueryBuilder()
+          .update(Session)
+          .set({ endTime: new Date() })
+          .whereInIds(ids)
+          .execute();
+      }
+    } catch (e) {
+      this.logger.error('Failed to cleanup zombie sessions', (e as Error).stack);
+    }
   }
 }

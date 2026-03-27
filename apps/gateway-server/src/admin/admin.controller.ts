@@ -95,7 +95,7 @@ export class AdminController {
     }),
   )
   async ingestRagDocument(
-    @UploadedFile() file: Express.Multer.File | undefined,
+    @UploadedFile() file: any,
     @Body() dto: RagIngestDto,
   ) {
     if (!file) {

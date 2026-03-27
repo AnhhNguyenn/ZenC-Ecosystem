@@ -28,13 +28,13 @@ export class Unit {
   @JoinColumn({ name: 'courseId' })
   course!: Course;
 
-  @Column({ type: 'uniqueidentifier' })
+  @Column({ type: 'uuid' })
   courseId!: string;
 
-  @Column({ type: 'nvarchar', length: 255 })
+  @Column({ type: 'varchar', length: 255 })
   title!: string;
 
-  @Column({ type: 'nvarchar', length: 1000, nullable: true })
+  @Column({ type: 'varchar', length: 1000, nullable: true })
   description!: string | null;
 
   /** Display order within the course – enforces curriculum sequence */
@@ -42,7 +42,7 @@ export class Unit {
   sortOrder!: number;
 
   /** Icon URL for the skill tree visualization (CDN path) */
-  @Column({ type: 'nvarchar', length: 500, nullable: true })
+  @Column({ type: 'varchar', length: 500, nullable: true })
   iconUrl!: string | null;
 
   /**
@@ -53,6 +53,6 @@ export class Unit {
   @Column({ type: 'int', default: 80 })
   unlockThreshold!: number;
 
-  @CreateDateColumn({ type: 'datetime2' })
+  @CreateDateColumn({ type: 'timestamptz' })
   readonly createdAt!: Date;
 }

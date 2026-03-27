@@ -30,7 +30,7 @@ export class AdminAuditLog {
   @JoinColumn({ name: 'adminId' })
   admin!: User;
 
-  @Column({ type: 'uniqueidentifier' })
+  @Column({ type: 'uuid' })
   adminId!: string;
 
   /** The user affected by the action */
@@ -38,24 +38,24 @@ export class AdminAuditLog {
   @JoinColumn({ name: 'targetUserId' })
   targetUser!: User;
 
-  @Column({ type: 'uniqueidentifier' })
+  @Column({ type: 'uuid' })
   targetUserId!: string;
 
   /**
    * Action type enum – constrained set of allowed admin operations.
    * Matches the AdminAction enum from @zenc/shared-types.
    */
-  @Column({ type: 'nvarchar', length: 50 })
+  @Column({ type: 'varchar', length: 50 })
   action!: string;
 
   /** Mandatory audit justification for compliance */
-  @Column({ type: 'nvarchar', length: 1000 })
+  @Column({ type: 'varchar', length: 1000 })
   reason!: string;
 
   /** Snapshot of the changes made (JSON stringified before/after) */
-  @Column({ type: 'nvarchar', length: 'MAX', nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   changeSnapshot!: string | null;
 
-  @CreateDateColumn({ type: 'datetime2' })
+  @CreateDateColumn({ type: 'timestamptz' })
   timestamp!: Date;
 }

@@ -92,33 +92,33 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
 
   /**
    * Resample Float32 audio from native device sample rate → 16kHz using
-   * OfflineAudioContext. The Gateway expects PCM 16-bit / 16kHz / Mono.
+   * pure mathematical linear interpolation. NO OfflineAudioContext needed.
+   *
+   * Previous implementation created a new OfflineAudioContext per call (~20/sec),
+   * causing severe memory leaks and browser tab crashes after minutes of use.
    */
-  const resampleTo16kHz = async (
+  const resampleTo16kHz = (
     inputBuffer: Float32Array,
     fromSampleRate: number,
-  ): Promise<Int16Array> => {
+  ): Int16Array => {
     if (fromSampleRate === 16000) {
-      // No resampling needed
       return floatTo16BitPCM(inputBuffer);
     }
 
-    const frameCount = Math.round(inputBuffer.length * (16000 / fromSampleRate));
-    const offlineCtx = new OfflineAudioContext(1, frameCount, 16000);
+    const ratio = fromSampleRate / 16000;
+    const outputLength = Math.round(inputBuffer.length / ratio);
+    const output = new Float32Array(outputLength);
 
-    const audioBuf = offlineCtx.createBuffer(1, inputBuffer.length, fromSampleRate);
-    // copyToChannel requires Float32Array<ArrayBuffer>; create explicit copy to satisfy TypeScript
-    const plainBuffer = new Float32Array(inputBuffer.length);
-    plainBuffer.set(inputBuffer);
-    audioBuf.copyToChannel(plainBuffer, 0);
+    for (let i = 0; i < outputLength; i++) {
+      const srcIndex = i * ratio;
+      const srcFloor = Math.floor(srcIndex);
+      const srcCeil = Math.min(srcFloor + 1, inputBuffer.length - 1);
+      const frac = srcIndex - srcFloor;
+      // Linear interpolation between two nearest samples
+      output[i] = inputBuffer[srcFloor] * (1 - frac) + inputBuffer[srcCeil] * frac;
+    }
 
-    const source = offlineCtx.createBufferSource();
-    source.buffer = audioBuf;
-    source.connect(offlineCtx.destination);
-    source.start();
-
-    const rendered = await offlineCtx.startRendering();
-    return floatTo16BitPCM(rendered.getChannelData(0));
+    return floatTo16BitPCM(output);
   };
 
   const floatTo16BitPCM = (input: Float32Array): Int16Array => {
@@ -164,13 +164,13 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
       // Buffer size 4096 gives ~85ms chunks at 48kHz – good tradeoff for latency
       const processor = ctx.createScriptProcessor(4096, 1, 1);
 
-      processor.onaudioprocess = async (e) => {
+      processor.onaudioprocess = (e) => {
         // Skip if muted or AI is speaking (simple echo-cancellation guard)
         if (isMutedRef.current || state === 'speaking') return;
 
         const inputData = e.inputBuffer.getChannelData(0);
-        // Slice to create a plain Float32Array<ArrayBuffer> copy (avoids SharedArrayBuffer type ambiguity)
-        const pcm16 = await resampleTo16kHz(new Float32Array(inputData).slice(), nativeSampleRate);
+        // Synchronous linear interpolation resampler (no OfflineAudioContext)
+        const pcm16 = resampleTo16kHz(new Float32Array(inputData).slice(), nativeSampleRate);
         socketService.emit('audio_chunk', pcm16.buffer);
       };
 

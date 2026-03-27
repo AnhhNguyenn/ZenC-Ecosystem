@@ -29,21 +29,21 @@ export class Lesson {
   @JoinColumn({ name: 'unitId' })
   unit!: Unit;
 
-  @Column({ type: 'uniqueidentifier' })
+  @Column({ type: 'uuid' })
   unitId!: string;
 
-  @Column({ type: 'nvarchar', length: 255 })
+  @Column({ type: 'varchar', length: 255 })
   title!: string;
 
   /**
    * Lesson type drives the UI template selection on the mobile client.
    * CONVERSATION type triggers the voice pipeline; others use exercise UI.
    */
-  @Column({ type: 'nvarchar', length: 20 })
+  @Column({ type: 'varchar', length: 20 })
   type!: 'GRAMMAR' | 'VOCABULARY' | 'SPEAKING' | 'LISTENING' | 'CONVERSATION' | 'READING';
 
   /** Markdown-formatted lesson content (theory/explanation section) */
-  @Column({ type: 'nvarchar', length: 'MAX', nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   content!: string | null;
 
   /** XP awarded on completion – higher for harder lessons */
@@ -61,6 +61,6 @@ export class Lesson {
   @Column({ type: 'decimal', precision: 3, scale: 1, default: 1.0 })
   difficultyMultiplier!: number;
 
-  @CreateDateColumn({ type: 'datetime2' })
+  @CreateDateColumn({ type: 'timestamptz' })
   readonly createdAt!: Date;
 }

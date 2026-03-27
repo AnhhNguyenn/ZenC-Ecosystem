@@ -230,7 +230,7 @@ export class AdminService {
   }
 
   async ingestRagDocument(
-    file: Express.Multer.File,
+    file: any,
     sourceName: string,
   ): Promise<{
     message: string;
@@ -302,7 +302,7 @@ export class AdminService {
     operation: string,
   ): Promise<T> {
     const rawBody = await response.text();
-    let payload: unknown = {};
+    let payload: any = {};
 
     if (rawBody) {
       try {

@@ -25,15 +25,15 @@ export class User {
   id!: string;
 
   @Index({ unique: true })
-  @Column({ type: 'nvarchar', length: 255, unique: true })
+  @Column({ type: 'varchar', length: 255, unique: true })
   email!: string;
 
   /** Bcrypt hash – never store plaintext passwords */
-  @Column({ type: 'nvarchar', length: 255 })
+  @Column({ type: 'varchar', length: 255 })
   passwordHash!: string;
 
   @Column({
-    type: 'nvarchar',
+    type: 'varchar',
     length: 20,
     default: 'FREE',
   })
@@ -47,28 +47,28 @@ export class User {
   tokenBalance!: number;
 
   @Column({
-    type: 'nvarchar',
+    type: 'varchar',
     length: 20,
     default: 'ACTIVE',
   })
   status!: 'ACTIVE' | 'LOCKED' | 'BANNED';
 
-  @Column({ type: 'bit', default: false })
+  @Column({ type: 'boolean', default: false })
   isDeleted!: boolean;
 
-  @Column({ type: 'datetime2', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   deletedAt!: Date | null;
 
   /** Hashed refresh token for rotation-based JWT refresh flow */
-  @Column({ type: 'nvarchar', length: 255, nullable: true })
+  @Column({ type: 'varchar', length: 255, nullable: true })
   refreshTokenHash!: string | null;
 
-  @Column({ type: 'bit', default: false })
+  @Column({ type: 'boolean', default: false })
   emailVerified!: boolean;
 
-  @CreateDateColumn({ type: 'datetime2' })
+  @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 
-  @UpdateDateColumn({ type: 'datetime2' })
+  @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt!: Date;
 }

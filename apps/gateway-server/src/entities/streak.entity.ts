@@ -36,7 +36,7 @@ export class Streak {
   @JoinColumn({ name: 'userId' })
   user!: User;
 
-  @Column({ type: 'uniqueidentifier' })
+  @Column({ type: 'uuid' })
   userId!: string;
 
   /** Current consecutive active days */
@@ -63,6 +63,6 @@ export class Streak {
   @Column({ type: 'int', default: 0 })
   totalActiveDays!: number;
 
-  @UpdateDateColumn({ type: 'datetime2' })
+  @UpdateDateColumn({ type: 'timestamptz' })
   readonly updatedAt!: Date;
 }

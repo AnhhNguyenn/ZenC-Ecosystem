@@ -33,7 +33,7 @@ export class UserVocabulary {
   readonly id!: string;
 
   @Index()
-  @Column({ type: 'uniqueidentifier' })
+  @Column({ type: 'uuid' })
   userId!: string;
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
@@ -41,7 +41,7 @@ export class UserVocabulary {
   user!: User;
 
   /** FK to Vocabulary (null for context-extracted words) */
-  @Column({ type: 'uniqueidentifier', nullable: true })
+  @Column({ type: 'uuid', nullable: true })
   vocabularyId!: string | null;
 
   @ManyToOne(() => Vocabulary, { onDelete: 'CASCADE', nullable: true })
@@ -51,15 +51,15 @@ export class UserVocabulary {
   // ── Word Data (for context-extracted vocabulary) ─────────────
 
   /** The word itself (stored directly for context-extracted words) */
-  @Column({ type: 'nvarchar', length: 100, nullable: true })
+  @Column({ type: 'varchar', length: 100, nullable: true })
   word!: string | null;
 
   /** Definition text (auto-generated or from Vocabulary FK) */
-  @Column({ type: 'nvarchar', length: 500, nullable: true })
+  @Column({ type: 'varchar', length: 500, nullable: true })
   definition!: string | null;
 
   /** Example sentence from context or course */
-  @Column({ type: 'nvarchar', length: 500, nullable: true })
+  @Column({ type: 'varchar', length: 500, nullable: true })
   exampleSentence!: string | null;
 
   // ── SM-2 Algorithm Fields ────────────────────────────────────
@@ -77,7 +77,7 @@ export class UserVocabulary {
 
   /** Next scheduled review date; null = never reviewed */
   @Index()
-  @Column({ type: 'datetime2', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   nextReviewAt!: Date | null;
 
   /** Days until next review (SM-2: initial=1, then 6, then prev * EF) */
@@ -105,13 +105,13 @@ export class UserVocabulary {
   totalCorrect!: number;
 
   /** Last time this word was reviewed */
-  @Column({ type: 'datetime2', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   lastReviewedAt!: Date | null;
 
-  @CreateDateColumn({ type: 'datetime2' })
+  @CreateDateColumn({ type: 'timestamptz' })
   readonly createdAt!: Date;
 
-  @UpdateDateColumn({ type: 'datetime2' })
+  @UpdateDateColumn({ type: 'timestamptz' })
   readonly updatedAt!: Date;
 }
 

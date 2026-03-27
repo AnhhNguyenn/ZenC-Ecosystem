@@ -11,6 +11,7 @@ import {
   Course,
   Unit,
   Lesson,
+  Exercise,
   ExerciseAttempt,
   DailyGoal,
   Streak,
@@ -302,15 +303,47 @@ export class LessonsService {
 
     if (!lesson) throw new NotFoundException('Lesson not found');
 
+    // ── Server-side score computation (never trust client) ────────
+    const exercises = await this.attemptRepo.manager.find(Exercise, {
+      where: { lessonId },
+      select: ['id'],
+    });
+    const exerciseIds = exercises.map((e) => e.id);
+
+    let serverScore = 0;
+    if (exerciseIds.length > 0) {
+      // Get the latest attempt per exercise for this user
+      const attempts = await this.attemptRepo
+        .createQueryBuilder('a')
+        .select('a.exerciseId', 'exerciseId')
+        .addSelect('MAX(a.score)', 'bestScore')
+        .where('a.userId = :userId', { userId })
+        .andWhere('a.exerciseId IN (:...exerciseIds)', { exerciseIds })
+        .groupBy('a.exerciseId')
+        .getRawMany<{ exerciseId: string; bestScore: number }>();
+
+      if (attempts.length === 0) {
+        throw new BadRequestException(
+          'No exercise attempts found. Complete the exercises before submitting the lesson.',
+        );
+      }
+
+      const totalScore = attempts.reduce((sum, a) => sum + (a.bestScore ?? 0), 0);
+      serverScore = Math.round(totalScore / exerciseIds.length);
+    } else {
+      // Lesson has no exercises – use client score as fallback
+      serverScore = dto.score;
+    }
+
     // Validate minimum passing score
-    if (dto.score < 60) {
+    if (serverScore < 60) {
       throw new BadRequestException(
-        'Minimum score of 60% required to complete a lesson',
+        `Score ${serverScore}% is below the minimum 60% required to complete a lesson`,
       );
     }
 
     // Calculate XP with difficulty multiplier and score bonus
-    const scoreMultiplier = dto.score >= 90 ? 1.5 : dto.score >= 80 ? 1.2 : 1.0;
+    const scoreMultiplier = serverScore >= 90 ? 1.5 : serverScore >= 80 ? 1.2 : 1.0;
     const xpEarned = Math.round(
       lesson.xpReward * Number(lesson.difficultyMultiplier) * scoreMultiplier,
     );
@@ -407,12 +440,9 @@ export class LessonsService {
       select: ['id'],
     });
 
-    let completed = 0;
-    for (const lesson of lessons) {
-      const isComplete = await this.redis.isLessonCompleted(userId, lesson.id);
-      if (isComplete) completed++;
-    }
-    return completed;
+    const lessonIds = lessons.map((l) => l.id);
+    const completedSet = await this.redis.batchCheckLessonCompletions(userId, lessonIds);
+    return completedSet.size;
   }
 
   private async _isUnitUnlocked(

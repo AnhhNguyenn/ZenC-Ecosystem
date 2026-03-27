@@ -23,15 +23,15 @@ export class Course {
   @PrimaryGeneratedColumn('uuid')
   readonly id!: string;
 
-  @Column({ type: 'nvarchar', length: 255 })
+  @Column({ type: 'varchar', length: 255 })
   title!: string;
 
-  @Column({ type: 'nvarchar', length: 2000 })
+  @Column({ type: 'varchar', length: 2000 })
   description!: string;
 
   /** CEFR level this course targets – used for adaptive course recommendations */
   @Index()
-  @Column({ type: 'nvarchar', length: 2 })
+  @Column({ type: 'varchar', length: 2 })
   targetLevel!: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
 
   /** Display order in course catalog – lower numbers appear first */
@@ -39,7 +39,7 @@ export class Course {
   sortOrder!: number;
 
   /** URL to course thumbnail – stored in CDN, never in DB as blob */
-  @Column({ type: 'nvarchar', length: 500, nullable: true })
+  @Column({ type: 'varchar', length: 500, nullable: true })
   thumbnailUrl!: string | null;
 
   /** XP bonus awarded on course completion */
@@ -55,15 +55,15 @@ export class Course {
    * Prevents accidental exposure of incomplete content.
    */
   @Index()
-  @Column({ type: 'bit', default: false })
+  @Column({ type: 'boolean', default: false })
   isPublished!: boolean;
 
-  @Column({ type: 'nvarchar', length: 100, nullable: true })
+  @Column({ type: 'varchar', length: 100, nullable: true })
   category!: string | null;
 
-  @CreateDateColumn({ type: 'datetime2' })
+  @CreateDateColumn({ type: 'timestamptz' })
   readonly createdAt!: Date;
 
-  @UpdateDateColumn({ type: 'datetime2' })
+  @UpdateDateColumn({ type: 'timestamptz' })
   readonly updatedAt!: Date;
 }

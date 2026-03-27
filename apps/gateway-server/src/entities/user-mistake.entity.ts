@@ -29,17 +29,17 @@ export class UserMistake {
   @JoinColumn({ name: 'userId' })
   user!: User;
 
-  @Column({ type: 'uniqueidentifier' })
+  @Column({ type: 'uuid' })
   userId!: string;
 
-  @Column({ type: 'nvarchar', length: 1000 })
+  @Column({ type: 'varchar', length: 1000 })
   originalSentence!: string;
 
-  @Column({ type: 'nvarchar', length: 1000 })
+  @Column({ type: 'varchar', length: 1000 })
   correctedSentence!: string;
 
   /** Rule identifier for frontend tutorial linking (e.g. "SVA-001") */
-  @Column({ type: 'nvarchar', length: 50 })
+  @Column({ type: 'varchar', length: 50 })
   grammarRuleId!: string;
 
   /**
@@ -47,7 +47,7 @@ export class UserMistake {
    * Worker cron queries WHERE nextReviewAt <= NOW() daily.
    */
   @Index()
-  @Column({ type: 'datetime2', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   nextReviewAt!: Date | null;
 
   /** SM-2 interval in days – doubles on successful recall */

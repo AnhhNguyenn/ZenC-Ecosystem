@@ -319,6 +319,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // ── Step 5: Create AI Session ───────────────────────────────
       const targetWords = await this.redis.getClient().lrange(`vocab_force:${userId}`, 0, 2);
       const systemPrompt = await this.buildAdaptivePrompt(userId, profile, 'FREE_TALK', undefined, undefined, undefined, targetWords);
+      const systemPrompt = await this.buildAdaptivePrompt(userId, profile, 'FREE_TALK');
       const sessionId = `${userId}_${Date.now()}`;
       this.socketSessions.set(client.id, sessionId);
       this.providerSessionIds.set(client.id, sessionId);

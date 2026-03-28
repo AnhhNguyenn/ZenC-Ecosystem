@@ -28,6 +28,7 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
   const [isConnected, setIsConnected] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [latestCorrection, setLatestCorrection] = useState<string | null>(null);
 
   // Audio refs
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -131,7 +132,7 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
     return output;
   };
 
-  const startRecording = useCallback(async () => {
+  const startRecording = useCallback(async (config: { sampleRate: number; channels: number; bytesPerSample: number; settings?: any }) => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -157,6 +158,7 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
         sampleRate: 16000,
         channels: 1,
         bytesPerSample: 2,
+        ...config.settings
       });
 
       const source = ctx.createMediaStreamSource(stream);
@@ -279,7 +281,7 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
 
   // ── Socket Event Handler Setup ─────────────────────────────────
 
-  const connect = useCallback(() => {
+  const connect = useCallback((settings?: { vnSupportEnabled: boolean; speakingSpeed: number }) => {
     if (!token) return;
 
     socketService.connect(token);
@@ -295,7 +297,7 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
     // Gateway sends session_started immediately after auth + setup
     socket.on('session_started', () => {
       setState('listening');
-      startRecording();
+      startRecording({ sampleRate: 16000, channels: 1, bytesPerSample: 2, settings });
     });
 
     socket.on('ai_transcript', (data: { text: string }) => {
@@ -327,7 +329,9 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
     socket.on('grammar_correction', (data: { hasMistake: boolean; correction: string }) => {
       if (data.hasMistake) {
         console.log('[Grammar]', data.correction);
-        // TODO: Surface this in UI as a subtle correction bubble
+        setLatestCorrection(data.correction);
+        // Auto-dismiss correction after 5 seconds
+        setTimeout(() => setLatestCorrection(null), 5000);
       }
     });
 
@@ -355,6 +359,7 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
     setIsConnected(false);
     setState('idle');
     setTranscript({ ai: '', user: '' });
+    setLatestCorrection(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -389,5 +394,6 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
     isConnected,
     isMuted,
     isPaused,
+    latestCorrection,
   };
 }

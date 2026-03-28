@@ -75,6 +75,40 @@ export function FeatureFlags() {
               className="w-6 h-6"
             />
           </div>
+
+          <div className="mt-4 pt-4 border-t">
+            <label className="font-bold block mb-1 text-red-600">🛡️ LLM Guardrail (Prompt Injection Regex)</label>
+            <input
+              type="text"
+              defaultValue="(ignore previous instructions|system prompt|bypass|you are a bot|forget your instructions)"
+              className="w-full border border-red-300 p-2 rounded text-xs font-mono"
+            />
+            <span className="text-xs text-gray-500 mt-1 block">Hệ thống sẽ Force Disconnect nếu khách nói các từ này.</span>
+          </div>
+
+          <div className="mt-4 pt-4 border-t">
+            <label className="font-bold block mb-1 text-red-600">🛡️ Bot Farming / Replay Attack</label>
+            <div className="flex gap-2 items-center">
+              <span className="text-sm">Số lần lặp Voice tối đa:</span>
+              <input type="number" defaultValue="3" className="w-20 border border-red-300 p-2 rounded text-xs" />
+            </div>
+            <span className="text-xs text-gray-500 mt-1 block">Tự động khóa họng nếu nhận diện trùng lặp text/audio liên tục để farm Token.</span>
+          </div>
+
+          <div className="mt-4 pt-4 border-t">
+            <label className="font-bold block mb-1 text-red-600">⏳ WebSocket Slowloris Limit</label>
+            <div className="flex gap-4">
+              <div>
+                <span className="text-sm">Idle Timeout (Giây):</span>
+                <input type="number" defaultValue="15" className="w-full border border-red-300 p-2 rounded text-xs" />
+              </div>
+              <div>
+                <span className="text-sm">Max Session (Phút):</span>
+                <input type="number" defaultValue="60" className="w-full border border-red-300 p-2 rounded text-xs" />
+              </div>
+            </div>
+            <span className="text-xs text-gray-500 mt-1 block">Disconnect nếu treo máy không gửi Data, hoặc chat quá 60 phút để chống rò rỉ RAM.</span>
+          </div>
         </div>
 
         <div className="border p-4 bg-blue-50 rounded shadow-inner">

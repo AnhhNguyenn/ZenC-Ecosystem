@@ -38,7 +38,7 @@ export default function AdminDashboardPage() {
 
       {/* Extreme Discipline: 4-Cards Maximum */}
       <StatsSection>
-        <AdminStats isLoading={isLoading} data={mockMetrics} />
+        <AdminStats />
       </StatsSection>
 
       {/* 70/30 UI Layout Pattern */}

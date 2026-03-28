@@ -11,6 +11,7 @@ import { Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
+import { Redis } from 'ioredis';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -111,6 +112,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly switchAttempts = new Map<string, number>();
   private readonly isSwitching = new Set<string>();
 
+  // ── IRT Placement Level Subscriber ──────────
+  private placementLevelSubscriber: Redis | null = null;
+
   // ── Circuit Breaker: per-provider failure tracking ──────────
   private readonly geminiBreaker = new CircuitBreaker('gemini', {
     failureThreshold: 3,
@@ -136,7 +140,55 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly profileRepo: Repository<UserProfile>,
     @InjectRepository(Session)
     private readonly sessionRepo: Repository<Session>,
-  ) {}
+  ) {
+    this.initPlacementLevelSubscriber();
+  }
+
+  private async initPlacementLevelSubscriber() {
+    try {
+      this.placementLevelSubscriber = this.redis.getClient().duplicate();
+      await this.placementLevelSubscriber.subscribe('placement_level_update', (err: any, count: any) => {
+        if (err) this.logger.error('Failed to subscribe to placement_level_update', err);
+      });
+      this.placementLevelSubscriber.on('message', (channel: string, message: string) => {
+        if (channel === 'placement_level_update') {
+          try {
+            const data = JSON.parse(message);
+            this.handlePlacementLevelUpdate(data.userId, data.newLevel);
+          } catch (e) {
+            this.logger.error('Failed to parse placement_level_update message', e);
+          }
+        }
+      });
+    } catch (e) {
+      this.logger.error('Failed to initialize placement level subscriber', e);
+    }
+  }
+
+  private handlePlacementLevelUpdate(userId: string, newLevel: string) {
+    let targetSocketId: string | undefined;
+    for (const [socketId, uid] of this.socketUsers.entries()) {
+      if (uid === userId && this.socketModes.get(socketId) === 'PLACEMENT_TEST') {
+        targetSocketId = socketId;
+        break;
+      }
+    }
+
+    if (targetSocketId) {
+      this.logger.log(`[IRT] Adjusting placement test difficulty to ${newLevel} for user ${userId}`);
+      const providerSessionId = this.providerSessionIds.get(targetSocketId);
+      const provider = this.socketProviders.get(targetSocketId);
+
+      if (providerSessionId) {
+        const prompt = `System instruction: The student's current estimated level is now ${newLevel}. Adjust your next question to exactly match this CEFR difficulty level.`;
+        if (provider === 'openai') {
+          this.openaiService.sendTextPrompt(providerSessionId, prompt);
+        } else {
+          this.geminiService.sendTextPrompt(providerSessionId, prompt);
+        }
+      }
+    }
+  }
 
   // ═══════════════════════════════════════════════════════════════
   // CONNECTION LIFECYCLE
@@ -265,6 +317,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.socketProviders.set(client.id, provider);
 
       // ── Step 5: Create AI Session ───────────────────────────────
+      const targetWords = await this.redis.getClient().lrange(`vocab_force:${userId}`, 0, 2);
+      const systemPrompt = await this.buildAdaptivePrompt(userId, profile, 'FREE_TALK', undefined, undefined, undefined, targetWords);
       const systemPrompt = await this.buildAdaptivePrompt(userId, profile, 'FREE_TALK');
       const sessionId = `${userId}_${Date.now()}`;
       this.socketSessions.set(client.id, sessionId);
@@ -648,10 +702,15 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Load profile for rebuilding system prompt
       const profile = await this.redis.getCachedUserProfile(userId);
       const mode = this.socketModes.get(client.id) || 'FREE_TALK';
+      const targetWords = await this.redis.getClient().lrange(`vocab_force:${userId}`, 0, 2);
       let systemPrompt = await this.buildAdaptivePrompt(
         userId,
         profile || { currentLevel: 'A1', confidenceScore: '0.5', vnSupportEnabled: 'true', tier: 'FREE' },
         mode,
+        undefined,
+        undefined,
+        undefined,
+        targetWords
       );
 
       // Restore short-term memory transcript from Redis (from the persistent DB session ID)
@@ -926,6 +985,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         scenarioId,
         topicId,
       );
+      const targetWords = await this.redis.getClient().lrange(`vocab_force:${userId}`, 0, 2);
       const systemPrompt = await this.buildAdaptivePrompt(
         userId,
         profile || { currentLevel: 'A1', confidenceScore: '0.5', vnSupportEnabled: 'true', tier: 'FREE' },
@@ -933,6 +993,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         scenarioId,
         topicId,
         ragContext,
+        targetWords,
       );
 
       // Send mode context to the AI
@@ -1514,6 +1575,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     scenarioId?: string,
     topicId?: string,
     ragContext?: string,
+    targetWords?: string[],
   ): Promise<string> {
     const confidence = parseFloat(profile['confidenceScore'] || '0.5');
     const level = this.normalizeCefrLevel(profile['currentLevel'], 'A1');
@@ -1554,7 +1616,7 @@ ${languageInstructions}
 
 ${modeInstructions}
 </strict_persona>
-${groundedContext}
+${groundedContext}${targetWords && targetWords.length > 0 ? `\n\n[SECRET MISSION]\nYour secret mission today is to subtly force the student to say these target words naturally: [${targetWords.join(', ')}]. \nCreate conversational situations or ask questions that heavily imply these words. \nIf the student says the word, or any variation of it, YOU MUST immediately and enthusiastically praise them (e.g., "Wow, you used the word '${targetWords[0]}' perfectly!"), and then transition to another topic or the next target word.` : ''}
 
 <security_shield>
 [CRITICAL SECURITY DIRECTIVE - DO NOT IGNORE]

@@ -226,6 +226,33 @@ async def run_vocab_review_cron(redis_client) -> dict:
             except Exception as e:
                 logger.error(f"Failed to notify user {user_id}: {e}")
 
+        # Active Vocabulary Forcing: populate `vocab_force:{userId}` with top 3 due items
+        try:
+            force_stmt = (
+                select(UserVocabulary)
+                .where(UserVocabulary.nextReviewAt <= today)
+                .order_by(UserVocabulary.nextReviewAt.asc())
+            )
+            force_result = await session.execute(force_stmt)
+            due_vocab_all = force_result.scalars().all()
+
+            # Group by user id
+            user_vocab_map = {}
+            for v in due_vocab_all:
+                if v.userId not in user_vocab_map:
+                    user_vocab_map[v.userId] = []
+                user_vocab_map[v.userId].append(v.word)
+
+            for uid, words in user_vocab_map.items():
+                top_3 = words[:3]
+                key = f"vocab_force:{uid}"
+                await redis_client.delete(key)
+                if top_3:
+                    await redis_client.rpush(key, *top_3)
+                await redis_client.expire(key, 86400) # 24h TTL
+        except Exception as e:
+            logger.error(f"Failed to populate vocab force lists: {e}")
+
         await session.commit()
 
     logger.info(f"Vocab review cron: {stats['notifications_created']} notifications")

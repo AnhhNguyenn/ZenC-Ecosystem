@@ -3,12 +3,34 @@
 import React, { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import styles from "./AppShell.module.scss";
-import { Menu, X } from "lucide-react";
+import { Menu, X, Flame, Gem, Medal } from "lucide-react";
 
 export interface AppShellProps {
   sidebar?: React.ReactNode;
   header?: React.ReactNode;
   children: React.ReactNode;
+}
+
+function HookHeader() {
+  // TODO: Fetch real user stats from global store or React Query
+  const streak = 12;
+  const coins = 3450;
+
+  return (
+    <div className={styles.hookHeader}>
+      <div className={styles.hookAsset}>
+        <Flame size={20} className={styles.flameIcon} />
+        <span>{streak}</span>
+      </div>
+      <div className={styles.hookAsset}>
+        <Gem size={20} className={styles.gemIcon} />
+        <span>{coins}</span>
+      </div>
+      <div className={styles.hookAsset}>
+        <Medal size={20} className={styles.medalIcon} />
+      </div>
+    </div>
+  );
 }
 
 export function AppShell({ sidebar, header, children }: AppShellProps) {
@@ -57,7 +79,7 @@ export function AppShell({ sidebar, header, children }: AppShellProps) {
         </div>
         
         {/* Desktop Optional Header (Usually injected by God-page wrappers) */}
-        {header && <div className={styles.desktopHeader}>{header}</div>}
+        {header ? <div className={styles.desktopHeader}>{header}</div> : <div className={styles.desktopHeader}><HookHeader /></div>}
         
         <main className={styles.scrollArea}>{children}</main>
       </div>

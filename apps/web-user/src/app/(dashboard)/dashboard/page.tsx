@@ -11,6 +11,7 @@ import {
   LearningProgress,
   ActivityFeed,
 } from "@/features/dashboard/components/DashboardWidgets";
+import { DashboardEmptyState } from "@/features/dashboard/components/EmptyState";
 import { useUserQuery } from "@/hooks/useAuth"; // Reusing auth hook for profile payload which has stats
 
 export default function DashboardPage() {
@@ -19,12 +20,19 @@ export default function DashboardPage() {
   
   // NOTE: In a real system the stats would be fetched from `useUserStatsQuery`. 
   // We mock the mapping here for V14 architectural demonstration.
+  // 💥 ZERO-FRICTION ONBOARDING: Force XP to 0 to trigger the Empty State.
   const mockStats = {
-    totalXp: 1250,
-    currentStreak: 4,
-    accuracy: 94,
-    lessonsCompleted: 12,
+    totalXp: 0,
+    currentStreak: 0,
+    accuracy: 0,
+    lessonsCompleted: 0,
   };
+
+  const isEmpty = mockStats.totalXp === 0;
+
+  if (isEmpty && !isLoading) {
+    return <DashboardEmptyState />;
+  }
 
   // 2. God-Page Anti-Pattern resolved: This file ONLY assembles components. No business logic.
   return (

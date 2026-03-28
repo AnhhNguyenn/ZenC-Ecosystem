@@ -9,9 +9,12 @@ import { Mic, MicOff, PhoneOff, PhoneCall, Settings2, Play } from 'lucide-react'
 import styles from './page.module.scss';
 import { Card } from '@/components/ui/Card';
 import { useAuth } from '@/features/auth/AuthContext';
+import { RewardScreen } from '@/features/voice/RewardScreen';
+import { useState } from 'react';
 
 export default function VoicePracticePage() {
   const { token } = useAuth();
+  const [showReward, setShowReward] = useState(false);
   const {
     connect,
     disconnect,
@@ -29,10 +32,16 @@ export default function VoicePracticePage() {
   const handleToggleSession = () => {
     if (isActive) {
       disconnect();
+      // Show reward screen immediately upon ending session
+      setShowReward(true);
     } else {
       connect();
     }
   };
+
+  if (showReward) {
+    return <RewardScreen xpEarned={50} coinsEarned={15} onClose={() => setShowReward(false)} />;
+  }
 
   return (
     <div className={styles.container}>

@@ -114,3 +114,56 @@
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+/* -------------------------------- */
+/* HOOK HEADER (GAMIFICATION)       */
+/* -------------------------------- */
+.desktopHeader {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 var(--spacing-2xl);
+  border-bottom: 1px solid var(--color-neutral-200);
+  background-color: var(--color-glass-surface);
+  backdrop-filter: var(--effect-blur-medium);
+  z-index: 20;
+}
+
+.hookHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-lg);
+}
+
+.hookAsset {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-weight: 700;
+  font-size: var(--font-size-md);
+  color: var(--color-neutral-800);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-full);
+  background-color: var(--color-neutral-100);
+  cursor: default;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  &:hover {
+    transform: scale(1.05);
+  }
+}
+
+.flameIcon {
+  color: #fb923c; /* Orange for streak */
+  fill: #fdba74;
+}
+
+.gemIcon {
+  color: #38bdf8; /* Blue for ZenC Coin */
+  fill: #7dd3fc;
+}
+
+.medalIcon {
+  color: #facc15; /* Yellow/Gold for Rank */
+}

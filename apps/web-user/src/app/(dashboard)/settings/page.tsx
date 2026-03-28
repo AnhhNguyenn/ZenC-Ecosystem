@@ -63,7 +63,7 @@ export default function SettingsPage() {
                   <div className={styles.avatarPlaceholder}>
                     {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
                   </div>
-                  <Button variant="outline" size="sm">Change Avatar</Button>
+                  <Button variant="secondary" size="sm">Change Avatar</Button>
                 </div>
                 
                 <form className={styles.formGrid}>

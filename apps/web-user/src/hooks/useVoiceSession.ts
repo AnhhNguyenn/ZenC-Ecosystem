@@ -27,6 +27,7 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
   const [transcript, setTranscript] = useState<{ ai: string; user: string }>({ ai: '', user: '' });
   const [isConnected, setIsConnected] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
 
   // Audio refs
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -186,6 +187,96 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const reNegotiateAudio = useCallback(async () => {
+    console.log('[Voice] Re-negotiating audio due to device change or unpause');
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+    }
+
+    // Attempt to grab the stream again
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: { ideal: 16000 },
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      mediaStreamRef.current = stream;
+
+      if (sourceNodeRef.current && audioContextRef.current) {
+         sourceNodeRef.current.disconnect();
+         const newSource = audioContextRef.current.createMediaStreamSource(stream);
+         sourceNodeRef.current = newSource;
+
+         if (processorRef.current) {
+           newSource.connect(processorRef.current);
+         }
+      }
+    } catch (err) {
+      console.error('[Voice] Failed to re-negotiate audio', err);
+    }
+  }, []);
+
+  // ── Browser Physics Defense ────────────────────────────────────
+
+  // Background Tab Defense
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        console.warn('[Voice] Tab hidden. Pausing session.');
+        setIsPaused(true);
+        // Instruct backend to pause AI processing
+        socketService.emit('client_paused', { reason: 'background_tab' });
+
+        // Disconnect audio source to stop recording processing
+        if (sourceNodeRef.current) {
+           sourceNodeRef.current.disconnect();
+        }
+      }
+      // Note: We don't auto-resume when visible. User must click "Resume".
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
+  // Hardware Swap Defense
+  useEffect(() => {
+    const handleDeviceChange = () => {
+       console.warn('[Voice] Hardware swap detected.');
+       // Optionally show a toast here, or rely on UI to react to `isPaused` or general state
+       // Silent re-negotiation:
+       reNegotiateAudio();
+    };
+
+    navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange);
+    return () => {
+      navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange);
+    };
+  }, [reNegotiateAudio]);
+
+  const resumeSession = useCallback(async () => {
+    console.log('[Voice] Resuming session');
+
+    // Ensure Context is awake
+    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+      await audioContextRef.current.resume();
+    }
+
+    // Re-grab microphone and connect
+    await reNegotiateAudio();
+
+    // Instruct backend to resume
+    socketService.emit('client_resumed', {});
+    setIsPaused(false);
+  }, [reNegotiateAudio]);
+
+
   // ── Socket Event Handler Setup ─────────────────────────────────
 
   const connect = useCallback(() => {
@@ -292,9 +383,11 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
     connect,
     disconnect,
     toggleMute,
+    resumeSession,
     state,
     transcript,
     isConnected,
     isMuted,
+    isPaused,
   };
 }

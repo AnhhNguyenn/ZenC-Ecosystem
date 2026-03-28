@@ -91,7 +91,70 @@ async def assess_pronunciation(
 
         prompt = PRONUNCIATION_PROMPT.format(reference_text=reference_text)
 
-        # Send audio + prompt to Gemini for multimodal analysis
+        # Use Azure Pronunciation Assessment API if configured
+        import base64
+        import aiohttp
+        azure_key = settings.AZURE_SPEECH_KEY
+        azure_region = settings.AZURE_SPEECH_REGION
+
+        if azure_key and azure_region:
+            url = f"https://{azure_region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=en-US"
+            headers = {
+                "Ocp-Apim-Subscription-Key": azure_key,
+                "Content-Type": "audio/wav; codecs=audio/pcm; samplerate=16000",
+                "Accept": "application/json",
+                "Pronunciation-Assessment": base64.b64encode(json.dumps({
+                    "ReferenceText": reference_text,
+                    "GradingSystem": "HundredMark",
+                    "Granularity": "Phoneme",
+                    "Dimension": "Comprehensive"
+                }).encode('utf-8')).decode('utf-8')
+            }
+            audio_bytes = base64.b64decode(audio_base64)
+
+            # The API expects WAV header or raw PCM depending on exact config,
+            # but usually it handles raw PCM 16kHz 16-bit mono well.
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, data=audio_bytes) as resp:
+                    if resp.status == 200:
+                        azure_res = await resp.json()
+                        n_best = azure_res.get("NBest", [{}])[0]
+                        pronunciation_result = n_best.get("PronunciationAssessment", {})
+
+                        phoneme_scores = []
+                        problem_areas = []
+                        for word in n_best.get("Words", []):
+                            for phoneme in word.get("Phonemes", []):
+                                p_res = phoneme.get("PronunciationAssessment", {})
+                                p_score = p_res.get("AccuracyScore", 0)
+                                phoneme_scores.append({
+                                    "phoneme": phoneme.get("Phoneme", ""),
+                                    "score": p_score,
+                                    "feedback": "Needs improvement" if p_score < 80 else "Good"
+                                })
+                                if p_score < 80:
+                                    problem_areas.append(f"Pronunciation of /{phoneme.get('Phoneme', '')}/ in '{word.get('Word', '')}'")
+
+                        result = {
+                            "overallScore": pronunciation_result.get("PronScore", 0),
+                            "fluencyScore": pronunciation_result.get("FluencyScore", 0),
+                            "accuracyScore": pronunciation_result.get("AccuracyScore", 0),
+                            "phonemeScores": phoneme_scores,
+                            "problemAreas": list(set(problem_areas))[:5],
+                            "suggestions": ["Focus on the highlighted phonemes"],
+                            "detailedFeedback": "Azure Pronunciation Assessment completed."
+                        }
+
+                        logger.info(f"Azure Pronunciation assessment for user {user_id}: overall={result.get('overallScore', 0)}")
+                        return {
+                            "status": "COMPLETED",
+                            "result": result,
+                        }
+                    else:
+                        logger.error(f"Azure API returned {resp.status}: {await resp.text()}")
+                        # Fallback to Gemini below
+
+        # Send audio + prompt to Gemini for multimodal analysis as fallback
         response = await await_with_timeout(
             model.generate_content_async(
                 [

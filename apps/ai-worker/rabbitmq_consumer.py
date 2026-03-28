@@ -37,6 +37,11 @@ class RabbitMQConsumer:
                 asyncio.create_task(self._consume_queue("post_session_eval", self._handle_scoring))
             )
             
+            # Start Placement Turn Eval consumer
+            self._tasks.append(
+                asyncio.create_task(self._consume_queue("placement_turn_evaluate", self._handle_placement_turn))
+            )
+
             logger.info("RabbitMQ Consumer started successfully.")
         except Exception as e:
             logger.error(f"Failed to start RabbitMQ consumer: {e}")
@@ -69,6 +74,16 @@ class RabbitMQConsumer:
     async def _handle_scoring(self, raw_data: str):
         from events.pubsub_listener import pubsub_listener
         await pubsub_listener._handle_conversation_evaluate(raw_data)
+
+    async def _handle_placement_turn(self, raw_data: str):
+        from main import redis_client
+        if not redis_client:
+            logger.error("Redis client unavailable for placement evaluation")
+            return
+
+        logger.info(f"Processing placement turn evaluate task")
+        from services.irt_evaluator import handle_placement_turn_evaluate
+        await handle_placement_turn_evaluate(raw_data, redis_client)
 
     async def stop(self):
         self._running = False

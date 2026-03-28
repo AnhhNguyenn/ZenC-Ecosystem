@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     ELEVENLABS_API_KEY: str = ""
     ELEVENLABS_VOICE_ID: str = "EXAVITQu4vr4xnSDxMaL" # Sarah voice
 
+    AZURE_SPEECH_KEY: str = ""
+    AZURE_SPEECH_REGION: str = ""
+
     WORKER_PORT: int = 8000
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20

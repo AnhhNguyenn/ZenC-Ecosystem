@@ -261,6 +261,11 @@ export class GeminiService implements OnModuleDestroy {
         session.emitter.emit('turnComplete');
       }
     }
+
+    // Check for VAD / user speech starting
+    if (message.serverContent && message.serverContent.interrupted) {
+       session.emitter.emit('speechStarted');
+    }
   }
 
   /**

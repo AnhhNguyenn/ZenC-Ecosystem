@@ -30,13 +30,15 @@ export function CourseBuilder() {
     if (lesson.status === "LIVE") {
       alert("❌ NGHIÊM CẤM sửa trực tiếp bài học đang LIVE (Tránh sập học viên đang học dở).\nHệ thống sẽ tự động Clone ra bản DRAFT để bạn sửa.");
       // Logic: API Clone Lesson -> Đổi URL sang trang sửa bản DRAFT mới.
-      const newDraft: Lesson = {
-        id: `L${Date.now()}`,
-        title: `${lesson.title} (Clone)`,
-        status: "DRAFT",
-        lockedBy: currentUser
-      };
-      setLessons([...lessons, newDraft]);
+      setLessons((prev) => [
+        ...prev,
+        {
+          id: `L${crypto.randomUUID()}`,
+          title: `${lesson.title} (Clone)`,
+          status: "DRAFT",
+          lockedBy: currentUser,
+        },
+      ]);
       return;
     }
 

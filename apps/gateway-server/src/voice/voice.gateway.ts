@@ -98,6 +98,16 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     { bucket: number; count: number }
   >();
 
+  /** Anti-Bot Farming / Replay Attack tracker */
+  private readonly socketLastTranscripts = new Map<
+    string,
+    { text: string; count: number }
+  >();
+
+  /** WebSocket Slowloris Prevention */
+  private readonly absoluteTimeouts = new Map<string, NodeJS.Timeout>();
+  private readonly idleTimeouts = new Map<string, NodeJS.Timeout>();
+
   private readonly switchAttempts = new Map<string, number>();
   private readonly isSwitching = new Set<string>();
 
@@ -255,7 +265,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.socketProviders.set(client.id, provider);
 
       // ── Step 5: Create AI Session ───────────────────────────────
-      const systemPrompt = this.buildAdaptivePrompt(profile, 'FREE_TALK');
+      const systemPrompt = await this.buildAdaptivePrompt(userId, profile, 'FREE_TALK');
       const sessionId = `${userId}_${Date.now()}`;
       this.socketSessions.set(client.id, sessionId);
       this.providerSessionIds.set(client.id, sessionId);
@@ -271,6 +281,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.socketModes.set(client.id, 'FREE_TALK');
       this.sessionStartTimes.set(client.id, Date.now());
       this.correctionEnabled.set(client.id, true);
+
+      // ── WEBSOCKET SLOWLORIS SHIELD ──────────────────────────────
+      await this.resetTimeouts(client);
 
       // Create DB session
       const dbSession = this.sessionRepo.create({
@@ -413,11 +426,42 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       const sid = this.socketSessions.get(client.id);
       if (sid) {
-        this.redis.appendTranscriptLine(sid, 'ai', text).catch(e => this.logger.error(e));
+        // Redact PII to prevent sensitive AI output from being stored
+        const redacted = this.redactPII(text);
+        this.redis.appendTranscriptLine(sid, 'ai', redacted).catch(e => this.logger.error(e));
       }
     });
 
     emitter.on('userTranscript', async (text: string) => {
+      // ── ANTI-BOT FARMING (Replay Attack Shield) ──
+      const normalizedText = text.trim().toLowerCase();
+      if (normalizedText.length > 5) {
+        const lastTranscript = this.socketLastTranscripts.get(client.id);
+        if (lastTranscript && lastTranscript.text === normalizedText) {
+          lastTranscript.count += 1;
+          const configMaxReplayStr = await this.redis.getClient().get('SYSTEM_CONFIG:MAX_REPLAY_ATTACKS');
+          const maxReplay = configMaxReplayStr ? parseInt(configMaxReplayStr, 10) : 3;
+
+          if (lastTranscript.count >= maxReplay) {
+            this.logger.warn(`[Security] Bot Farming/Replay Attack detected from ${client.id}. Terminating connection.`);
+            client.emit('error', { message: "Repeated audio patterns detected. Connection terminated for bot farming.", code: "SECURITY_VIOLATION" });
+            // By calling disconnect here, the cleanupSession executes but skips saving points for this spam chunk
+            client.disconnect(true);
+            return;
+          }
+        } else {
+          this.socketLastTranscripts.set(client.id, { text: normalizedText, count: 1 });
+        }
+      }
+
+      const isInjection = await this.checkPromptInjection(text);
+      if (isInjection) {
+        this.logger.warn(`[Security] Audio Prompt Injection detected from ${client.id}. Terminating connection.`);
+        client.emit('ai_transcript', { text: "Security violation detected. Your connection has been terminated." });
+        client.disconnect(true);
+        return;
+      }
+
       // Trigger real-time grammar check on user's recent text if enabled, only when user finishes a sentence
       if (this.correctionEnabled.get(client.id)) {
         void this.triggerRealtimeGrammarCheck(client);
@@ -425,7 +469,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       const sid = this.socketSessions.get(client.id);
       if (sid) {
-        this.redis.appendTranscriptLine(sid, 'user', text).catch(e => this.logger.error(e));
+        // Redact PII (e.g., Credit Card Numbers) from User audio before storing as cleartext log
+        const redacted = this.redactPII(text);
+        this.redis.appendTranscriptLine(sid, 'user', redacted).catch(e => this.logger.error(e));
       }
 
       // ── COGNITIVE ROUTING (Handover to Deep Brain) ──
@@ -602,7 +648,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Load profile for rebuilding system prompt
       const profile = await this.redis.getCachedUserProfile(userId);
       const mode = this.socketModes.get(client.id) || 'FREE_TALK';
-      let systemPrompt = this.buildAdaptivePrompt(
+      let systemPrompt = await this.buildAdaptivePrompt(
+        userId,
         profile || { currentLevel: 'A1', confidenceScore: '0.5', vnSupportEnabled: 'true', tier: 'FREE' },
         mode,
       );
@@ -727,6 +774,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         });
         client.disconnect(true);
         return;
+      }
+
+      // Reset Idle timeout if chunk is substantial (> 100 bytes)
+      if (chunk.length > 100) {
+        void this.resetTimeouts(client, true);
       }
 
       if (!this.allowAudioEvent(client.id)) {
@@ -869,11 +921,13 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Rebuild system prompt for new mode
       const profile = await this.redis.getCachedUserProfile(userId);
       const ragContext = await this.loadRagContextForMode(
+        userId,
         data.mode,
         scenarioId,
         topicId,
       );
-      const systemPrompt = this.buildAdaptivePrompt(
+      const systemPrompt = await this.buildAdaptivePrompt(
+        userId,
         profile || { currentLevel: 'A1', confidenceScore: '0.5', vnSupportEnabled: 'true', tier: 'FREE' },
         data.mode,
         scenarioId,
@@ -932,6 +986,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const difficulty = this.normalizeCefrLevel(data.difficulty, 'B1');
       const ragContext = await this.queryRagContext(
         `Useful English phrases, vocabulary, and teaching notes for the scenario: ${category} ${scenarioId}`,
+        userId
       );
       const scenarioPrompt = this.buildScenarioPrompt(
         category,
@@ -1266,6 +1321,16 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client: Socket,
     reason: string,
   ): Promise<void> {
+    // Clear timeouts to prevent memory leaks
+    if (this.absoluteTimeouts.has(client.id)) {
+      clearTimeout(this.absoluteTimeouts.get(client.id));
+      this.absoluteTimeouts.delete(client.id);
+    }
+    if (this.idleTimeouts.has(client.id)) {
+      clearTimeout(this.idleTimeouts.get(client.id));
+      this.idleTimeouts.delete(client.id);
+    }
+
     const dbSessionIdForRedis = this.socketSessions.get(client.id);
     const providerSessionId = this.providerSessionIds.get(client.id);
     const userId = this.socketUsers.get(client.id);
@@ -1313,7 +1378,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
     }
 
-    // 3. Publish session_ended for Deep Brain analysis
+    // 3. Publish session_ended for Deep Brain analysis and Persona Updater
     if (userId && transcript.length > 0) {
       try {
         this.rabbitmq.dispatchDeepBrainTask(
@@ -1327,6 +1392,16 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             endTime: new Date().toISOString(),
           }
         ).catch(e => this.logger.error(`Failed to queue session_ended to RabbitMQ: ${e.message}`));
+
+        // Dispatch task for Cheap LLM (Flash/Llama) to summarize long-term memory
+        this.rabbitmq.dispatchDeepBrainTask(
+          'evaluate_user_persona',
+          {
+            userId,
+            transcript,
+          }
+        ).catch(e => this.logger.error(`Failed to queue evaluate_user_persona: ${e.message}`));
+
       } catch (error) {
         this.logger.error(
           `Failed to queue session_ended: ${(error as Error).message}`,
@@ -1367,6 +1442,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.sessionStartTimes.delete(client.id);
     this.correctionEnabled.delete(client.id);
     this.socketAudioEventCounts.delete(client.id);
+    this.socketLastTranscripts.delete(client.id);
 
     // 6. Remove active session from Redis (Prevent Race Condition)
     if (userId) {
@@ -1431,13 +1507,14 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
    * 2. Conversation mode (different instructions per mode)
    * 3. CEFR level (vocabulary and grammar complexity)
    */
-  private buildAdaptivePrompt(
+  private async buildAdaptivePrompt(
+    userId: string,
     profile: Record<string, string>,
     mode: string,
     scenarioId?: string,
     topicId?: string,
     ragContext?: string,
-  ): string {
+  ): Promise<string> {
     const confidence = parseFloat(profile['confidenceScore'] || '0.5');
     const level = this.normalizeCefrLevel(profile['currentLevel'], 'A1');
     const vnSupport = profile['vnSupportEnabled'] === 'true';
@@ -1453,6 +1530,10 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     } else {
       languageInstructions = `The student has moderate confidence (${confidence}). Use primarily English with occasional Vietnamese hints when they struggle. Balance challenge and support.`;
     }
+
+    // DYNAMIC_USER_CONTEXT (O(1) Speed Retrieval of 150-word Persona Summary from Redis)
+    const userPersonaSummary = await this.redis.getClient().get(`user_persona:${userId}`) || "This is a new student. Be encouraging and try to understand their learning needs.";
+    const dynamicUserContext = `\n\nSTUDENT BACKGROUND (Long-Term Memory):\n${userPersonaSummary}\nUse this information naturally to personalize the conversation.`;
 
     // Mode-specific instructions
     const modeInstructions = this.getModeInstructions(
@@ -1585,6 +1666,7 @@ You are now acting in this scenario. Set the scene briefly, then start the conve
   }
 
   private async loadRagContextForMode(
+    userId: string,
     mode: string,
     scenarioId?: string,
     topicId?: string,
@@ -1596,19 +1678,21 @@ You are now acting in this scenario. Set the scene briefly, then start the conve
     if (mode === 'TOPIC_DISCUSSION' && topicId) {
       return this.queryRagContext(
         `Curriculum context, vocabulary, and teaching notes for topic: ${topicId}`,
+        userId
       );
     }
 
     if ((mode === 'ROLE_PLAY' || mode === 'INTERVIEW') && scenarioId) {
       return this.queryRagContext(
         `Curriculum context, useful phrases, and guidance for scenario: ${scenarioId}`,
+        userId
       );
     }
 
     return undefined;
   }
 
-  private async queryRagContext(question: string): Promise<string | undefined> {
+  private async queryRagContext(question: string, userId?: string): Promise<string | undefined> {
     const adminSecret = this.config.get<string>('ADMIN_SECRET_KEY');
     if (!adminSecret) {
       return undefined;
@@ -1622,16 +1706,23 @@ You are now acting in this scenario. Set the scene briefly, then start the conve
     );
 
     try {
+      const payload: any = {
+        question,
+        top_k: 3,
+      };
+
+      // Inject userId metadata to filter for personal long-term memory (user-specific mistakes)
+      if (userId) {
+        payload.userId = userId;
+      }
+
       const response = await fetch(`${workerBaseUrl}/api/v1/rag/query`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${adminSecret}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          question,
-          top_k: 3,
-        }),
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(timeoutMs),
       });
 
@@ -1720,6 +1811,80 @@ You are now acting in this scenario. Set the scene briefly, then start the conve
     // Client-provided audio config is intentionally ignored to prevent fraudulent billing.
     return 32000;
   }
+  // ═══════════════════════════════════════════════════════════════
+  // SECURITY & GUARDRAILS
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * WebSocket Slowloris Shield
+   * Limits total session duration and idle time without audio.
+   */
+  private async resetTimeouts(client: Socket, onlyIdle = false): Promise<void> {
+    const configIdleStr = await this.redis.getClient().get('SYSTEM_CONFIG:IDLE_TIMEOUT_SEC');
+    const idleSeconds = configIdleStr ? parseInt(configIdleStr, 10) : 15;
+
+    // Reset Idle
+    if (this.idleTimeouts.has(client.id)) {
+      clearTimeout(this.idleTimeouts.get(client.id));
+    }
+    const idleTimer = setTimeout(() => {
+      this.logger.warn(`[Security] Idle timeout reached for ${client.id}. Disconnecting.`);
+      client.emit('error', { message: "Session closed due to inactivity.", code: "IDLE_TIMEOUT" });
+      client.disconnect(true);
+    }, idleSeconds * 1000);
+    this.idleTimeouts.set(client.id, idleTimer);
+
+    // Absolute
+    if (!onlyIdle && !this.absoluteTimeouts.has(client.id)) {
+      const configAbsStr = await this.redis.getClient().get('SYSTEM_CONFIG:MAX_SESSION_MINS');
+      const absMins = configAbsStr ? parseInt(configAbsStr, 10) : 60;
+
+      const absTimer = setTimeout(() => {
+        this.logger.warn(`[Security] Absolute timeout reached for ${client.id}. Disconnecting.`);
+        client.emit('error', { message: "Maximum session time reached.", code: "ABSOLUTE_TIMEOUT" });
+        client.disconnect(true);
+      }, absMins * 60 * 1000);
+      this.absoluteTimeouts.set(client.id, absTimer);
+    }
+  }
+
+  /**
+   * LLM Guardrail: Check for Audio Prompt Injection.
+   * If the user attempts to manipulate the prompt (e.g. "ignore all instructions"),
+   * intercept it here before hitting the AI.
+   */
+  private async checkPromptInjection(text: string): Promise<boolean> {
+    const configRegex = await this.redis.getClient().get('SYSTEM_CONFIG:PROMPT_INJECTION_REGEX');
+    const defaultRegex = "(ignore previous instructions|system prompt|bypass|you are a bot|forget your instructions)";
+    const regexPattern = configRegex || defaultRegex;
+
+    try {
+      const regex = new RegExp(regexPattern, 'i');
+      return regex.test(text);
+    } catch (e) {
+      this.logger.error(`Invalid regex for prompt injection: ${regexPattern}`);
+      return false;
+    }
+  }
+
+  /**
+   * Data Redaction: PII Leak Prevention
+   * Masks sensitive information like 16-digit credit cards before
+   * saving transcripts into Redis or Postgres.
+   */
+  private redactPII(text: string): string {
+    // Redact Credit Cards (16 digits with optional spaces/dashes)
+    let redacted = text.replace(/(?:\d[ -]*?){13,16}/g, '[REDACTED_CREDIT_CARD]');
+
+    // Redact Emails
+    redacted = redacted.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[REDACTED_EMAIL]');
+
+    // Redact Phone Numbers (Basic 10-11 digit detection)
+    redacted = redacted.replace(/(?:(?:\+?1\s*(?:[.-]\s*)?)?(?:\(\s*([2-9]1[02-9]|[2-9][02-8]1|[2-9][02-8][02-9])\s*\)|([2-9]1[02-9]|[2-9][02-8]1|[2-9][02-8][02-9]))\s*(?:[.-]\s*)?)?([2-9]1[02-9]|[2-9][02-9]1|[2-9][02-9]{2})\s*(?:[.-]\s*)?([0-9]{4})(?:\s*(?:#|x\.?|ext\.?|extension)\s*(\d+))?/g, '[REDACTED_PHONE]');
+
+    return redacted;
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // ZOMBIE SESSION CLEANUP (F5)
   // ═══════════════════════════════════════════════════════════════

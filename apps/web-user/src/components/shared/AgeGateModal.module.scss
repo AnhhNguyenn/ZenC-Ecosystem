@@ -1,0 +1,102 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.9);
+  backdrop-filter: blur(12px);
+  z-index: 9999; /* Ensure it blocks EVERYTHING */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.3s ease-out;
+}
+
+.modal {
+  background: white;
+  border-radius: var(--radius-2xl);
+  padding: var(--spacing-3xl);
+  width: 90%;
+  max-width: 480px;
+  text-align: center;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.iconWrapper {
+  width: 80px;
+  height: 80px;
+  background-color: var(--color-neutral-100);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto var(--spacing-xl);
+  color: var(--color-primary);
+}
+
+.title {
+  font-size: var(--font-size-2xl);
+  font-weight: 800;
+  color: var(--color-neutral-900);
+  margin-bottom: var(--spacing-md);
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  color: var(--color-neutral-600);
+  line-height: 1.6;
+  margin-bottom: var(--spacing-2xl);
+}
+
+.buttonGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.btn {
+  width: 100%;
+  padding: var(--spacing-lg);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  &:hover {
+    transform: scale(1.02);
+  }
+}
+
+.btnOver13 {
+  background-color: var(--color-primary);
+  color: white;
+  border: none;
+  box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.2);
+}
+
+.btnUnder13 {
+  background-color: white;
+  color: var(--color-neutral-700);
+  border: 2px solid var(--color-neutral-200);
+}
+
+.privacyText {
+  margin-top: var(--spacing-xl);
+  font-size: var(--font-size-sm);
+  color: var(--color-neutral-500);
+
+  a {
+    color: var(--color-primary);
+    text-decoration: underline;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}

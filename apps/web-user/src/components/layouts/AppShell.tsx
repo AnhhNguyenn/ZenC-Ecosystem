@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import styles from "./AppShell.module.scss";
 import { Menu, X, Flame, Gem, Medal } from "lucide-react";
+import { AgeGateModal } from "@/components/shared/AgeGateModal";
 
 export interface AppShellProps {
   sidebar?: React.ReactNode;
@@ -56,6 +57,7 @@ export function AppShell({ sidebar, header, children }: AppShellProps) {
 
   return (
     <div className={styles.appShell}>
+      <AgeGateModal />
       {/* Mobile Overlay */}
       {isMobileMenuOpen && (
         <div 

@@ -10,11 +10,17 @@ import styles from './page.module.scss';
 import { Card } from '@/components/ui/Card';
 import { useAuth } from '@/features/auth/AuthContext';
 import { RewardScreen } from '@/features/voice/RewardScreen';
+import { SettingsModal } from '@/features/voice/SettingsModal';
 import { useState } from 'react';
 
 export default function VoicePracticePage() {
   const { token } = useAuth();
   const [showReward, setShowReward] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [voiceSettings, setVoiceSettings] = useState({
+    vnSupportEnabled: true,
+    speakingSpeed: 1.0,
+  });
   const {
     connect,
     disconnect,
@@ -25,6 +31,7 @@ export default function VoicePracticePage() {
     isMuted,
     isPaused,
     resumeSession,
+    latestCorrection,
   } = useVoiceSession({ token });
 
   const isActive = state !== 'idle';
@@ -35,7 +42,7 @@ export default function VoicePracticePage() {
       // Show reward screen immediately upon ending session
       setShowReward(true);
     } else {
-      connect();
+      connect(voiceSettings);
     }
   };
 
@@ -65,13 +72,34 @@ export default function VoicePracticePage() {
             {isConnected ? 'Online' : 'Offline'}
           </span>
         </div>
-        <Button variant="ghost" size="icon" aria-label="Settings">
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Settings"
+          onClick={() => setShowSettings(true)}
+          disabled={isActive}
+          title={isActive ? "Không thể đổi cài đặt khi đang trong buổi học" : "Cài đặt"}
+        >
           <Settings2 size={24} />
         </Button>
       </header>
 
+      {showSettings && (
+        <SettingsModal
+          initialSettings={voiceSettings}
+          onClose={() => setShowSettings(false)}
+          onSave={(settings) => setVoiceSettings(settings)}
+        />
+      )}
+
       <main className={styles.main}>
         <VoiceVisualizer state={state} audioLevel={0.5} />
+
+        {latestCorrection && (
+          <div className={styles.grammarBubble}>
+            <span className={styles.correctionLabel}>💡 Sửa lỗi:</span> {latestCorrection}
+          </div>
+        )}
 
         <Card className={styles.transcriptCard}>
           {transcript.ai && (

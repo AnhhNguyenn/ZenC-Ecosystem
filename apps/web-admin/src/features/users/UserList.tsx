@@ -5,8 +5,6 @@ import {
   flexRender,
   getCoreRowModel,
   useReactTable,
-  getPaginationRowModel,
-  getSortedRowModel,
 } from "@tanstack/react-table";
 import { useState } from "react";
 import { useDebounce } from "../../hooks/useDebounce"; // Will create this
@@ -14,7 +12,7 @@ import { CanAccess } from "../../components/ui/CanAccess";
 import Link from "next/link";
 
 // Mock API Call - Represents Server-Side Action
-async function fetchUsers(page: number, search: string, sortBy: string) {
+async function fetchUsers(_page: number, _search: string, _sortBy: string) {
   // In real app, this calls Gateway GET /admin/users?page=${page}&q=${search}&sort=${sortBy}
   return {
     data: [
@@ -29,7 +27,7 @@ async function fetchUsers(page: number, search: string, sortBy: string) {
 export function UserListFeature() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
-  const [sortBy, setSortBy] = useState("createdAt_desc");
+  const [sortBy] = useState("createdAt_desc");
 
   const debouncedSearch = useDebounce(search, 500);
 
@@ -45,14 +43,14 @@ export function UserListFeature() {
     {
       accessorKey: "tokenBalance",
       header: "Số dư Token",
-      cell: (info: any) => (
+      cell: (info: { getValue: () => number }) => (
         <span className="font-mono">{info.getValue().toLocaleString()}</span>
       )
     },
     {
       accessorKey: "status",
       header: "Trạng thái",
-      cell: (info: any) => {
+      cell: (info: { getValue: () => string }) => {
         const status = info.getValue();
         const color = status === "ACTIVE" ? "text-green-600" : "text-red-600";
         return <span className={`font-bold ${color}`}>{status}</span>;
@@ -61,7 +59,7 @@ export function UserListFeature() {
     {
       id: "actions",
       header: "Hành động",
-      cell: (info: any) => (
+      cell: (info: { row: { original: { id: string } } }) => (
         <div className="flex gap-2">
           <Link href={`/users/${info.row.original.id}`} className="text-blue-500 hover:underline">
             Chi tiết 360°

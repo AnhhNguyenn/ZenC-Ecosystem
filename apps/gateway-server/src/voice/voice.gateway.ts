@@ -99,15 +99,21 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     { bucket: number; count: number }
   >();
 
+  /** Anti-Bot Farming / Replay Attack tracker */
+  private readonly socketLastTranscripts = new Map<
+    string,
+    { text: string; count: number }
+  >();
+
+  /** WebSocket Slowloris Prevention */
+  private readonly absoluteTimeouts = new Map<string, NodeJS.Timeout>();
+  private readonly idleTimeouts = new Map<string, NodeJS.Timeout>();
+
   private readonly switchAttempts = new Map<string, number>();
   private readonly isSwitching = new Set<string>();
 
   // ── IRT Placement Level Subscriber ──────────
   private placementLevelSubscriber: Redis | null = null;
-
-  // ── Affective Computing tracking ──────────
-  /** Maps socketId → NodeJS.Timeout for detecting long silence */
-  private readonly socketSilenceTimers = new Map<string, NodeJS.Timeout>();
 
   // ── Circuit Breaker: per-provider failure tracking ──────────
   private readonly geminiBreaker = new CircuitBreaker('gemini', {
@@ -160,7 +166,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   private handlePlacementLevelUpdate(userId: string, newLevel: string) {
-    // Find active socket for this user in PLACEMENT_TEST mode
     let targetSocketId: string | undefined;
     for (const [socketId, uid] of this.socketUsers.entries()) {
       if (uid === userId && this.socketModes.get(socketId) === 'PLACEMENT_TEST') {
@@ -313,7 +318,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // ── Step 5: Create AI Session ───────────────────────────────
       const targetWords = await this.redis.getClient().lrange(`vocab_force:${userId}`, 0, 2);
-      const systemPrompt = this.buildAdaptivePrompt(profile, 'FREE_TALK', undefined, undefined, undefined, targetWords);
+      const systemPrompt = await this.buildAdaptivePrompt(userId, profile, 'FREE_TALK', undefined, undefined, undefined, targetWords);
       const sessionId = `${userId}_${Date.now()}`;
       this.socketSessions.set(client.id, sessionId);
       this.providerSessionIds.set(client.id, sessionId);
@@ -329,6 +334,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.socketModes.set(client.id, 'FREE_TALK');
       this.sessionStartTimes.set(client.id, Date.now());
       this.correctionEnabled.set(client.id, true);
+
+      // ── WEBSOCKET SLOWLORIS SHIELD ──────────────────────────────
+      await this.resetTimeouts(client);
 
       // Create DB session
       const dbSession = this.sessionRepo.create({
@@ -471,38 +479,40 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       const sid = this.socketSessions.get(client.id);
       if (sid) {
-        this.redis.appendTranscriptLine(sid, 'ai', text).catch(e => this.logger.error(e));
+        // Redact PII to prevent sensitive AI output from being stored
+        const redacted = this.redactPII(text);
+        this.redis.appendTranscriptLine(sid, 'ai', redacted).catch(e => this.logger.error(e));
       }
     });
 
     emitter.on('userTranscript', async (text: string) => {
-      // Placement Test IRT trigger
-      const currentMode = this.socketModes.get(client.id) || 'FREE_TALK';
-      const dbSessionIdVal = this.socketSessions.get(client.id);
-      const userIdVal = this.socketUsers.get(client.id);
+      // ── ANTI-BOT FARMING (Replay Attack Shield) ──
+      const normalizedText = text.trim().toLowerCase();
+      if (normalizedText.length > 5) {
+        const lastTranscript = this.socketLastTranscripts.get(client.id);
+        if (lastTranscript && lastTranscript.text === normalizedText) {
+          lastTranscript.count += 1;
+          const configMaxReplayStr = await this.redis.getClient().get('SYSTEM_CONFIG:MAX_REPLAY_ATTACKS');
+          const maxReplay = configMaxReplayStr ? parseInt(configMaxReplayStr, 10) : 3;
 
-      if (currentMode === 'PLACEMENT_TEST' && dbSessionIdVal && userIdVal) {
-        this.rabbitmq.dispatchDeepBrainTask('placement_turn_evaluate', {
-          userId: userIdVal,
-          sessionId: dbSessionIdVal,
-          transcript: text,
-        }).catch(e => this.logger.error('Failed to queue placement turn evaluation to RabbitMQ', e));
+          if (lastTranscript.count >= maxReplay) {
+            this.logger.warn(`[Security] Bot Farming/Replay Attack detected from ${client.id}. Terminating connection.`);
+            client.emit('error', { message: "Repeated audio patterns detected. Connection terminated for bot farming.", code: "SECURITY_VIOLATION" });
+            // By calling disconnect here, the cleanupSession executes but skips saving points for this spam chunk
+            client.disconnect(true);
+            return;
+          }
+        } else {
+          this.socketLastTranscripts.set(client.id, { text: normalizedText, count: 1 });
+        }
       }
 
-      // Affective Computing: Check for filler words
-      const fillerRegex = /(^|\s)(uh|um|hmm|ờ|ờm)(?=\s|$)/gi;
-      const fillers = text.match(fillerRegex);
-      if (fillers && fillers.length > 3) {
-        this.logger.log(`[Affective] Detected ${fillers.length} filler words for ${client.id}`);
-        const providerSessionId = this.providerSessionIds.get(client.id);
-        if (providerSessionId) {
-          const prompt = "System instruction: The student is using many filler words and seems anxious. Instantly switch to a warmer, more comforting tone. Speak 30% slower and offer 2 simple hints in Vietnamese to help them out.";
-          if (provider === 'openai') {
-            this.openaiService.sendTextPrompt(providerSessionId, prompt);
-          } else {
-            this.geminiService.sendTextPrompt(providerSessionId, prompt);
-          }
-        }
+      const isInjection = await this.checkPromptInjection(text);
+      if (isInjection) {
+        this.logger.warn(`[Security] Audio Prompt Injection detected from ${client.id}. Terminating connection.`);
+        client.emit('ai_transcript', { text: "Security violation detected. Your connection has been terminated." });
+        client.disconnect(true);
+        return;
       }
 
       // Trigger real-time grammar check on user's recent text if enabled, only when user finishes a sentence
@@ -512,7 +522,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       const sid = this.socketSessions.get(client.id);
       if (sid) {
-        this.redis.appendTranscriptLine(sid, 'user', text).catch(e => this.logger.error(e));
+        // Redact PII (e.g., Credit Card Numbers) from User audio before storing as cleartext log
+        const redacted = this.redactPII(text);
+        this.redis.appendTranscriptLine(sid, 'user', redacted).catch(e => this.logger.error(e));
       }
 
       // ── COGNITIVE ROUTING (Handover to Deep Brain) ──
@@ -595,33 +607,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     emitter.on('turnComplete', () => {
       client.emit('turn_complete');
-
-      // Affective Computing: Start 4s silence detection
-      const existingTimer = this.socketSilenceTimers.get(client.id);
-      if (existingTimer) clearTimeout(existingTimer);
-
-      const timer = setTimeout(() => {
-        this.logger.log(`[Affective] User ${client.id} silent for 4s.`);
-        const providerSessionId = this.providerSessionIds.get(client.id);
-        if (providerSessionId) {
-          const prompt = "System instruction: The user has been silent for 4 seconds. They might be stuck. Gently offer a hint or suggest a simpler way to express their idea in Vietnamese.";
-          if (provider === 'openai') {
-            this.openaiService.sendTextPrompt(providerSessionId, prompt);
-          } else {
-            this.geminiService.sendTextPrompt(providerSessionId, prompt);
-          }
-        }
-      }, 4000);
-      this.socketSilenceTimers.set(client.id, timer);
-    });
-
-    emitter.on('speechStarted', () => {
-      // Affective Computing: Clear silence timer on VAD detection
-      const existingTimer = this.socketSilenceTimers.get(client.id);
-      if (existingTimer) {
-        clearTimeout(existingTimer);
-        this.socketSilenceTimers.delete(client.id);
-      }
     });
 
     emitter.on('fallbackToText', () => {
@@ -717,7 +702,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const profile = await this.redis.getCachedUserProfile(userId);
       const mode = this.socketModes.get(client.id) || 'FREE_TALK';
       const targetWords = await this.redis.getClient().lrange(`vocab_force:${userId}`, 0, 2);
-      let systemPrompt = this.buildAdaptivePrompt(
+      let systemPrompt = await this.buildAdaptivePrompt(
+        userId,
         profile || { currentLevel: 'A1', confidenceScore: '0.5', vnSupportEnabled: 'true', tier: 'FREE' },
         mode,
         undefined,
@@ -848,6 +834,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return;
       }
 
+      // Reset Idle timeout if chunk is substantial (> 100 bytes)
+      if (chunk.length > 100) {
+        void this.resetTimeouts(client, true);
+      }
+
       if (!this.allowAudioEvent(client.id)) {
         this.logger.warn(`Audio rate limit exceeded for ${client.id}`);
         client.emit('error', {
@@ -967,7 +958,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         'DEBATE',
         'INTERVIEW',
         'TOPIC_DISCUSSION',
-        'PLACEMENT_TEST',
       ];
       if (!validModes.includes(data.mode)) {
         client.emit('error', {
@@ -989,12 +979,14 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Rebuild system prompt for new mode
       const profile = await this.redis.getCachedUserProfile(userId);
       const ragContext = await this.loadRagContextForMode(
+        userId,
         data.mode,
         scenarioId,
         topicId,
       );
       const targetWords = await this.redis.getClient().lrange(`vocab_force:${userId}`, 0, 2);
-      const systemPrompt = this.buildAdaptivePrompt(
+      const systemPrompt = await this.buildAdaptivePrompt(
+        userId,
         profile || { currentLevel: 'A1', confidenceScore: '0.5', vnSupportEnabled: 'true', tier: 'FREE' },
         data.mode,
         scenarioId,
@@ -1054,6 +1046,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const difficulty = this.normalizeCefrLevel(data.difficulty, 'B1');
       const ragContext = await this.queryRagContext(
         `Useful English phrases, vocabulary, and teaching notes for the scenario: ${category} ${scenarioId}`,
+        userId
       );
       const scenarioPrompt = this.buildScenarioPrompt(
         category,
@@ -1388,6 +1381,16 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client: Socket,
     reason: string,
   ): Promise<void> {
+    // Clear timeouts to prevent memory leaks
+    if (this.absoluteTimeouts.has(client.id)) {
+      clearTimeout(this.absoluteTimeouts.get(client.id));
+      this.absoluteTimeouts.delete(client.id);
+    }
+    if (this.idleTimeouts.has(client.id)) {
+      clearTimeout(this.idleTimeouts.get(client.id));
+      this.idleTimeouts.delete(client.id);
+    }
+
     const dbSessionIdForRedis = this.socketSessions.get(client.id);
     const providerSessionId = this.providerSessionIds.get(client.id);
     const userId = this.socketUsers.get(client.id);
@@ -1435,7 +1438,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
     }
 
-    // 3. Publish session_ended for Deep Brain analysis
+    // 3. Publish session_ended for Deep Brain analysis and Persona Updater
     if (userId && transcript.length > 0) {
       try {
         this.rabbitmq.dispatchDeepBrainTask(
@@ -1449,29 +1452,20 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             endTime: new Date().toISOString(),
           }
         ).catch(e => this.logger.error(`Failed to queue session_ended to RabbitMQ: ${e.message}`));
+
+        // Dispatch task for Cheap LLM (Flash/Llama) to summarize long-term memory
+        this.rabbitmq.dispatchDeepBrainTask(
+          'evaluate_user_persona',
+          {
+            userId,
+            transcript,
+          }
+        ).catch(e => this.logger.error(`Failed to queue evaluate_user_persona: ${e.message}`));
+
       } catch (error) {
         this.logger.error(
           `Failed to queue session_ended: ${(error as Error).message}`,
         );
-      }
-    }
-
-    // Save placement test result to DB
-    const mode = this.socketModes.get(client.id) || 'FREE_TALK';
-    if (mode === 'PLACEMENT_TEST' && userId) {
-      const eloKey = `placement_elo:${userId}`;
-      const profileKey = `user_profile:${userId}`;
-      try {
-        const elo = await this.redis.getClient().get(eloKey);
-        const profileStr = await this.redis.getClient().get(profileKey);
-        if (elo && profileStr) {
-           const profile = JSON.parse(profileStr);
-           const level = profile.currentLevel;
-           await this.profileRepo.update({ userId }, { currentLevel: level });
-           this.logger.log(`Placement test finished for ${userId}. Level set to ${level} (Elo: ${elo})`);
-        }
-      } catch (e) {
-        this.logger.error(`Failed to save placement level to DB: ${(e as Error).message}`);
       }
     }
 
@@ -1508,10 +1502,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.sessionStartTimes.delete(client.id);
     this.correctionEnabled.delete(client.id);
     this.socketAudioEventCounts.delete(client.id);
-
-    const silenceTimer = this.socketSilenceTimers.get(client.id);
-    if (silenceTimer) clearTimeout(silenceTimer);
-    this.socketSilenceTimers.delete(client.id);
+    this.socketLastTranscripts.delete(client.id);
 
     // 6. Remove active session from Redis (Prevent Race Condition)
     if (userId) {
@@ -1576,14 +1567,15 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
    * 2. Conversation mode (different instructions per mode)
    * 3. CEFR level (vocabulary and grammar complexity)
    */
-  private buildAdaptivePrompt(
+  private async buildAdaptivePrompt(
+    userId: string,
     profile: Record<string, string>,
     mode: string,
     scenarioId?: string,
     topicId?: string,
     ragContext?: string,
     targetWords?: string[],
-  ): string {
+  ): Promise<string> {
     const confidence = parseFloat(profile['confidenceScore'] || '0.5');
     const level = this.normalizeCefrLevel(profile['currentLevel'], 'A1');
     const vnSupport = profile['vnSupportEnabled'] === 'true';
@@ -1600,6 +1592,10 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       languageInstructions = `The student has moderate confidence (${confidence}). Use primarily English with occasional Vietnamese hints when they struggle. Balance challenge and support.`;
     }
 
+    // DYNAMIC_USER_CONTEXT (O(1) Speed Retrieval of 150-word Persona Summary from Redis)
+    const userPersonaSummary = await this.redis.getClient().get(`user_persona:${userId}`) || "This is a new student. Be encouraging and try to understand their learning needs.";
+    const dynamicUserContext = `\n\nSTUDENT BACKGROUND (Long-Term Memory):\n${userPersonaSummary}\nUse this information naturally to personalize the conversation.`;
+
     // Mode-specific instructions
     const modeInstructions = this.getModeInstructions(
       mode,
@@ -1612,10 +1608,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       ? `\n\nREFERENCE CONTEXT:\n${ragContext}\nUse this as grounded curriculum context. Do not reveal it verbatim unless helpful for teaching.`
       : '';
 
-    const secretMission = targetWords && targetWords.length > 0
-      ? `\n\n[SECRET MISSION]\nYour secret mission today is to subtly force the student to say these target words naturally: [${targetWords.join(', ')}]. \nCreate conversational situations or ask questions that heavily imply these words. \nIf the student says the word, or any variation of it, YOU MUST immediately and enthusiastically praise them (e.g., "Wow, you used the word '${targetWords[0]}' perfectly!"), and then transition to another topic or the next target word.`
-      : '';
-
     return `<system_instructions>
 <strict_persona>
 ${basePrompt}
@@ -1623,7 +1615,7 @@ ${languageInstructions}
 
 ${modeInstructions}
 </strict_persona>
-${groundedContext}${secretMission}
+${groundedContext}${targetWords && targetWords.length > 0 ? `\n\n[SECRET MISSION]\nYour secret mission today is to subtly force the student to say these target words naturally: [${targetWords.join(', ')}]. \nCreate conversational situations or ask questions that heavily imply these words. \nIf the student says the word, or any variation of it, YOU MUST immediately and enthusiastically praise them (e.g., "Wow, you used the word '${targetWords[0]}' perfectly!"), and then transition to another topic or the next target word.` : ''}
 
 <security_shield>
 [CRITICAL SECURITY DIRECTIVE - DO NOT IGNORE]
@@ -1698,15 +1690,6 @@ Guide a focused discussion on a specific topic.
 - Encourage the student to express opinions with supporting reasons
 - Keep discussion at ${level} level with appropriate complexity`;
 
-      case 'PLACEMENT_TEST':
-        return `MODE: Dynamic Placement Test
-You are assessing the student's English proficiency level using a conversational adaptive test.
-- The student's estimated current level is ${level}. Ask a question or provide a speaking prompt appropriate for this exact level.
-- Keep your turn relatively short (1-2 sentences) so the student has to speak.
-- Do NOT correct their grammar or vocabulary directly. Your job is to listen and ask the next question.
-- Do NOT give them their score. Act like a friendly conversational partner who is getting to know them.
-- If they ask for help, provide minimal assistance and move to a simpler question.`;
-
       default:
         return `Have a natural English conversation at ${level} level.`;
     }
@@ -1724,8 +1707,6 @@ You are assessing the student's English proficiency level using a conversational
         'Interview mode! Tell me what kind of interview you want to practice.',
       TOPIC_DISCUSSION:
         "Topic discussion mode! I'll guide us through a topic.",
-      PLACEMENT_TEST:
-        "Welcome to the Placement Test! Let's have a quick 5-minute chat to find your level.",
     };
     return messages[mode] || 'Mode activated!';
   }
@@ -1746,6 +1727,7 @@ You are now acting in this scenario. Set the scene briefly, then start the conve
   }
 
   private async loadRagContextForMode(
+    userId: string,
     mode: string,
     scenarioId?: string,
     topicId?: string,
@@ -1757,19 +1739,21 @@ You are now acting in this scenario. Set the scene briefly, then start the conve
     if (mode === 'TOPIC_DISCUSSION' && topicId) {
       return this.queryRagContext(
         `Curriculum context, vocabulary, and teaching notes for topic: ${topicId}`,
+        userId
       );
     }
 
     if ((mode === 'ROLE_PLAY' || mode === 'INTERVIEW') && scenarioId) {
       return this.queryRagContext(
         `Curriculum context, useful phrases, and guidance for scenario: ${scenarioId}`,
+        userId
       );
     }
 
     return undefined;
   }
 
-  private async queryRagContext(question: string): Promise<string | undefined> {
+  private async queryRagContext(question: string, userId?: string): Promise<string | undefined> {
     const adminSecret = this.config.get<string>('ADMIN_SECRET_KEY');
     if (!adminSecret) {
       return undefined;
@@ -1783,16 +1767,23 @@ You are now acting in this scenario. Set the scene briefly, then start the conve
     );
 
     try {
+      const payload: any = {
+        question,
+        top_k: 3,
+      };
+
+      // Inject userId metadata to filter for personal long-term memory (user-specific mistakes)
+      if (userId) {
+        payload.userId = userId;
+      }
+
       const response = await fetch(`${workerBaseUrl}/api/v1/rag/query`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${adminSecret}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          question,
-          top_k: 3,
-        }),
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(timeoutMs),
       });
 
@@ -1881,6 +1872,80 @@ You are now acting in this scenario. Set the scene briefly, then start the conve
     // Client-provided audio config is intentionally ignored to prevent fraudulent billing.
     return 32000;
   }
+  // ═══════════════════════════════════════════════════════════════
+  // SECURITY & GUARDRAILS
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * WebSocket Slowloris Shield
+   * Limits total session duration and idle time without audio.
+   */
+  private async resetTimeouts(client: Socket, onlyIdle = false): Promise<void> {
+    const configIdleStr = await this.redis.getClient().get('SYSTEM_CONFIG:IDLE_TIMEOUT_SEC');
+    const idleSeconds = configIdleStr ? parseInt(configIdleStr, 10) : 15;
+
+    // Reset Idle
+    if (this.idleTimeouts.has(client.id)) {
+      clearTimeout(this.idleTimeouts.get(client.id));
+    }
+    const idleTimer = setTimeout(() => {
+      this.logger.warn(`[Security] Idle timeout reached for ${client.id}. Disconnecting.`);
+      client.emit('error', { message: "Session closed due to inactivity.", code: "IDLE_TIMEOUT" });
+      client.disconnect(true);
+    }, idleSeconds * 1000);
+    this.idleTimeouts.set(client.id, idleTimer);
+
+    // Absolute
+    if (!onlyIdle && !this.absoluteTimeouts.has(client.id)) {
+      const configAbsStr = await this.redis.getClient().get('SYSTEM_CONFIG:MAX_SESSION_MINS');
+      const absMins = configAbsStr ? parseInt(configAbsStr, 10) : 60;
+
+      const absTimer = setTimeout(() => {
+        this.logger.warn(`[Security] Absolute timeout reached for ${client.id}. Disconnecting.`);
+        client.emit('error', { message: "Maximum session time reached.", code: "ABSOLUTE_TIMEOUT" });
+        client.disconnect(true);
+      }, absMins * 60 * 1000);
+      this.absoluteTimeouts.set(client.id, absTimer);
+    }
+  }
+
+  /**
+   * LLM Guardrail: Check for Audio Prompt Injection.
+   * If the user attempts to manipulate the prompt (e.g. "ignore all instructions"),
+   * intercept it here before hitting the AI.
+   */
+  private async checkPromptInjection(text: string): Promise<boolean> {
+    const configRegex = await this.redis.getClient().get('SYSTEM_CONFIG:PROMPT_INJECTION_REGEX');
+    const defaultRegex = "(ignore previous instructions|system prompt|bypass|you are a bot|forget your instructions)";
+    const regexPattern = configRegex || defaultRegex;
+
+    try {
+      const regex = new RegExp(regexPattern, 'i');
+      return regex.test(text);
+    } catch (e) {
+      this.logger.error(`Invalid regex for prompt injection: ${regexPattern}`);
+      return false;
+    }
+  }
+
+  /**
+   * Data Redaction: PII Leak Prevention
+   * Masks sensitive information like 16-digit credit cards before
+   * saving transcripts into Redis or Postgres.
+   */
+  private redactPII(text: string): string {
+    // Redact Credit Cards (16 digits with optional spaces/dashes)
+    let redacted = text.replace(/(?:\d[ -]*?){13,16}/g, '[REDACTED_CREDIT_CARD]');
+
+    // Redact Emails
+    redacted = redacted.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[REDACTED_EMAIL]');
+
+    // Redact Phone Numbers (Basic 10-11 digit detection)
+    redacted = redacted.replace(/(?:(?:\+?1\s*(?:[.-]\s*)?)?(?:\(\s*([2-9]1[02-9]|[2-9][02-8]1|[2-9][02-8][02-9])\s*\)|([2-9]1[02-9]|[2-9][02-8]1|[2-9][02-8][02-9]))\s*(?:[.-]\s*)?)?([2-9]1[02-9]|[2-9][02-9]1|[2-9][02-9]{2})\s*(?:[.-]\s*)?([0-9]{4})(?:\s*(?:#|x\.?|ext\.?|extension)\s*(\d+))?/g, '[REDACTED_PHONE]');
+
+    return redacted;
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // ZOMBIE SESSION CLEANUP (F5)
   // ═══════════════════════════════════════════════════════════════

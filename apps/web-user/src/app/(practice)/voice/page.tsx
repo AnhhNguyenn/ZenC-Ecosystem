@@ -5,7 +5,7 @@ import { clsx } from 'clsx';
 import { useVoiceSession } from '@/hooks/useVoiceSession';
 import { VoiceVisualizer } from '@/features/voice/VoiceVisualizer';
 import { Button } from '@/components/ui/Button';
-import { Mic, MicOff, PhoneOff, PhoneCall, Settings2 } from 'lucide-react';
+import { Mic, MicOff, PhoneOff, PhoneCall, Settings2, Play } from 'lucide-react';
 import styles from './page.module.scss';
 import { Card } from '@/components/ui/Card';
 import { useAuth } from '@/features/auth/AuthContext';
@@ -20,6 +20,8 @@ export default function VoicePracticePage() {
     transcript,
     isConnected,
     isMuted,
+    isPaused,
+    resumeSession,
   } = useVoiceSession({ token });
 
   const isActive = state !== 'idle';
@@ -34,6 +36,19 @@ export default function VoicePracticePage() {
 
   return (
     <div className={styles.container}>
+      {isPaused && (
+        <div className={styles.pausedOverlay}>
+          <div className={styles.pausedContent}>
+            <h2>Buổi học đang tạm dừng</h2>
+            <p>Trình duyệt đã tạm ngắt kết nối âm thanh để tiết kiệm pin.</p>
+            <Button size="lg" onClick={resumeSession} className={styles.resumeBtn}>
+              <Play size={20} style={{ marginRight: '8px' }} />
+              Bấm để tiếp tục
+            </Button>
+          </div>
+        </div>
+      )}
+
       <header className={styles.header}>
         <div className={styles.sessionInfo}>
           <h1 className={styles.title}>Free Talk Session</h1>

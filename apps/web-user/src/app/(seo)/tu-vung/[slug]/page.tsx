@@ -1,7 +1,7 @@
 import React from 'react';
 import { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { Volume2 } from 'lucide-react';
+import { Volume2, ArrowRight, Lightbulb } from 'lucide-react';
 import styles from './page.module.scss';
 import MiniChatbot from '@/features/seo/components/MiniChatbot';
 
@@ -69,12 +69,16 @@ export default async function VocabularySeoPage({ params }: { params: Promise<{ 
           <p>{data.meaning}</p>
           <div className={styles.exampleBox}>
             <p>"{data.example}"</p>
-            <p style={{ marginTop: '8px' }}>👉 <em>{data.vietnameseExample}</em></p>
+            <p style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+               <ArrowRight size={16} /> <em>{data.vietnameseExample}</em>
+            </p>
           </div>
         </section>
 
         <section className={styles.section}>
-          <h2>Sự thật thú vị (Fun Fact) 💡</h2>
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+             Sự thật thú vị (Fun Fact) <Lightbulb size={24} color="#facc15" />
+          </h2>
           <p>{data.funFact}</p>
         </section>
 

@@ -5,7 +5,7 @@ import { clsx } from 'clsx';
 import { useVoiceSession } from '@/hooks/useVoiceSession';
 import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui/Button';
-import { Mic, MicOff, PhoneOff, PhoneCall, Settings2, Play } from 'lucide-react';
+import { Mic, MicOff, PhoneOff, PhoneCall, Settings2, Play, Lock, Lightbulb } from 'lucide-react';
 import styles from './page.module.scss';
 import { Card } from '@/components/ui/Card';
 import { useAuth } from '@/features/auth/AuthContext';
@@ -87,9 +87,11 @@ export default function VoicePracticePage() {
       {permissionDenied && (
         <div className={styles.pausedOverlay}>
           <div className={styles.pausedContent}>
-            <h2>Mic Permission Denied 🔒</h2>
+            <h2 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              Mic Permission Denied <Lock size={24} />
+            </h2>
             <p>
-              Trình duyệt đã chặn quyền truy cập Micro. Bạn cần bấm vào biểu tượng <strong>Ổ Khóa (🔒)</strong> trên thanh địa chỉ, chọn "Cho phép Micro", sau đó tải lại trang!
+              Trình duyệt đã chặn quyền truy cập Micro. Bạn cần bấm vào biểu tượng <strong style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>Ổ Khóa <Lock size={16} /></strong> trên thanh địa chỉ, chọn "Cho phép Micro", sau đó tải lại trang!
             </p>
             <Button size="lg" onClick={() => window.location.reload()} className={styles.resumeBtn} variant="primary">
               Đã mở quyền, Tải lại trang
@@ -149,7 +151,9 @@ export default function VoicePracticePage() {
 
         {latestCorrection && (
           <div className={styles.grammarBubble}>
-            <span className={styles.correctionLabel}>💡 Sửa lỗi:</span> {latestCorrection}
+            <span className={styles.correctionLabel} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+              <Lightbulb size={16} color="var(--color-primary)" /> Sửa lỗi:
+            </span> {latestCorrection}
           </div>
         )}
 

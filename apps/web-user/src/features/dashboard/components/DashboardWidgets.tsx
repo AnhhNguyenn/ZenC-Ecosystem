@@ -93,7 +93,7 @@ export function LearningProgress({ isLoading, data }: { isLoading: boolean; data
   const isNewUser = !data?.totalXp && !data?.lessonsCompleted;
 
   if (isNewUser) {
-    return <EmptyState />;
+    return <DashboardEmptyState />;
   }
 
   return (

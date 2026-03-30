@@ -295,6 +295,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             confidenceScore: String(dbProfile.confidenceScore),
             vnSupportEnabled: String(dbProfile.vnSupportEnabled),
             tier: dbUser.tier,
+            isMinor: String(dbProfile.isMinor),
           };
           await this.redis.cacheUserProfile(userId, profile);
         } else {
@@ -309,6 +310,14 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (!profile) {
         client.disconnect();
         return;
+      }
+
+      // ── SET COPPA FLAG ──────────────────────────────────────────
+      if (!client.data) client.data = {};
+      if (!client.data.user) client.data.user = {};
+      client.data.user.isMinor = profile.isMinor === 'true';
+      if (client.data.user.isMinor) {
+        this.logger.log(`[COPPA] Ephemeral mode enabled for user ${userId}`);
       }
 
       profile.tier = dbUser.tier;
@@ -402,6 +411,21 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @SubscribeMessage('client_coppa_status')
+  handleCoppaStatus(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { isMinor: boolean },
+  ): void {
+    if (!data || typeof data.isMinor !== 'boolean') return;
+    if (!client.data) client.data = {};
+    if (!client.data.user) client.data.user = {};
+
+    client.data.user.isMinor = data.isMinor;
+    if (data.isMinor) {
+      this.logger.log(`[COPPA] Ephemeral mode dynamically enabled for ${client.id} via socket event`);
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // AI PROVIDER MANAGEMENT
   // ═══════════════════════════════════════════════════════════════
@@ -481,7 +505,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (sid) {
         // Redact PII to prevent sensitive AI output from being stored
         const redacted = this.redactPII(text);
-        this.redis.appendTranscriptLine(sid, 'ai', redacted).catch(e => this.logger.error(e));
+        const isMinor = client.data?.user?.isMinor || false;
+        this.redis.appendTranscriptLine(sid, 'ai', redacted, isMinor).catch(e => this.logger.error(e));
       }
     });
 
@@ -524,7 +549,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (sid) {
         // Redact PII (e.g., Credit Card Numbers) from User audio before storing as cleartext log
         const redacted = this.redactPII(text);
-        this.redis.appendTranscriptLine(sid, 'user', redacted).catch(e => this.logger.error(e));
+        const isMinor = client.data?.user?.isMinor || false;
+        this.redis.appendTranscriptLine(sid, 'user', redacted, isMinor).catch(e => this.logger.error(e));
       }
 
       // ── COGNITIVE ROUTING (Handover to Deep Brain) ──
@@ -1202,14 +1228,18 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       if (!userId || transcript.length < 50) return;
 
-      this.rabbitmq.dispatchDeepBrainTask('conversation_evaluate', {
-          userId,
-          sessionId,
-          transcript,
-          mode,
-          durationMinutes: Math.round(durationMinutes * 10) / 10,
-          provider: this.socketProviders.get(client.id),
-      }).catch(e => this.logger.error('Failed to queue conversation evaluation to RabbitMQ', e));
+      // [COPPA] Block conversation_evaluate if user is a minor
+      const isMinor = client.data?.user?.isMinor;
+      if (!isMinor) {
+        this.rabbitmq.dispatchDeepBrainTask('conversation_evaluate', {
+            userId,
+            sessionId,
+            transcript,
+            mode,
+            durationMinutes: Math.round(durationMinutes * 10) / 10,
+            provider: this.socketProviders.get(client.id),
+        }).catch(e => this.logger.error('Failed to queue conversation evaluation to RabbitMQ', e));
+      }
       this.queuedConversationScores.add(client.id);
 
       // Update speaking minutes counter
@@ -1423,13 +1453,16 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const emitter = this.socketEmitters.get(client.id);
     if (emitter) emitter.removeAllListeners();
 
+    const isMinor = client.data?.user?.isMinor;
+
     // 2. Update DB session
     if (dbSessionId) {
       try {
         await this.sessionRepo.update(dbSessionId, {
           endTime: new Date(),
           totalTokensConsumed: tokensUsed,
-          transcript,
+          // [COPPA] Clear transcript if user is a minor
+          transcript: isMinor ? null : transcript,
         });
       } catch (error) {
         this.logger.error(
@@ -1439,7 +1472,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     // 3. Publish session_ended for Deep Brain analysis and Persona Updater
-    if (userId && transcript.length > 0) {
+    // [COPPA] Block analytics and persona evaluation if user is a minor
+    if (userId && transcript.length > 0 && !isMinor) {
       try {
         this.rabbitmq.dispatchDeepBrainTask(
           'session_ended',

@@ -1,7 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { authApi, LoginRequestDto, LoginResponseDto } from "../api/auth.api";
+import { authApi, LoginRequestDto, LoginResponseDto, RegisterRequestDto } from "../api/auth.api";
 import { setAccessToken } from "../api/axios";
 import { queryKeys } from "../config/queryKeys";
+
+export const useRegisterMutation = () => {
+  return useMutation({
+    mutationFn: (data: RegisterRequestDto) => authApi.register(data),
+  });
+};
 
 export const useLoginMutation = () => {
   const queryClient = useQueryClient();
@@ -39,5 +45,11 @@ export const useUserQuery = () => {
     queryFn: () => authApi.getCurrentUser(),
     retry: false, // Prevents React Query from aggressively hitting 401s if unauthenticated
     staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+};
+
+export const useUpdateProfileMutation = () => {
+  return useMutation({
+    mutationFn: (data: { isMinor: boolean }) => authApi.updateProfile(data),
   });
 };

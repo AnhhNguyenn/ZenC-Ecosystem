@@ -4,10 +4,13 @@ import React, { useState, useEffect } from 'react';
 import styles from './AgeGateModal.module.scss';
 import { ShieldCheck } from 'lucide-react';
 import { socketService } from '@/lib/socket';
+import { useUpdateProfileMutation, useUserQuery } from '@/hooks/useAuth';
 
 export function AgeGateModal() {
   const [isVisible, setIsVisible] = useState(false);
   const [hasVerified, setHasVerified] = useState(true);
+  const { data: user } = useUserQuery();
+  const updateProfileMutation = useUpdateProfileMutation();
 
   useEffect(() => {
     // Check local storage for existing verification
@@ -19,6 +22,24 @@ export function AgeGateModal() {
   }, []);
 
   const handleVerification = (isMinor: boolean) => {
+    if (user) {
+      updateProfileMutation.mutate(
+        { isMinor },
+        {
+          onSuccess: () => {
+            completeVerification(isMinor);
+          },
+          onError: (error) => {
+            console.error('[COPPA] Failed to update profile:', error);
+          },
+        }
+      );
+    } else {
+      completeVerification(isMinor);
+    }
+  };
+
+  const completeVerification = (isMinor: boolean) => {
     // Store locally to prevent re-asking
     localStorage.setItem('zenc_age_verified', 'true');
     localStorage.setItem('zenc_is_minor', isMinor.toString());
@@ -54,6 +75,7 @@ export function AgeGateModal() {
           <button
             className={`${styles.btn} ${styles.btnOver13}`}
             onClick={() => handleVerification(false)}
+            disabled={updateProfileMutation.isPending}
           >
             Tôi 13 tuổi trở lên
           </button>
@@ -61,6 +83,7 @@ export function AgeGateModal() {
           <button
             className={`${styles.btn} ${styles.btnUnder13}`}
             onClick={() => handleVerification(true)}
+            disabled={updateProfileMutation.isPending}
           >
             Tôi dưới 13 tuổi
           </button>

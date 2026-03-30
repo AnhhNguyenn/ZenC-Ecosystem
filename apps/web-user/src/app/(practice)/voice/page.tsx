@@ -14,10 +14,7 @@ import { SettingsModal } from '@/features/voice/SettingsModal';
 import { useState, memo } from 'react';
 
 // TẦNG 2: GIẢM CÂN APP (Bundle Size) - BẰNG DYNAMIC IMPORTS
-const VoiceVisualizer = dynamic(
-  () => import('@/features/voice/VoiceVisualizer').then(mod => mod.VoiceVisualizer),
-  { ssr: false }
-);
+const VoiceVisualizer = dynamic(() => import('@/features/voice/VoiceVisualizer'), { ssr: false });
 
 // TẦNG 3: CÁCH LY TRẠNG THÁI (State Isolation) - CHỐNG NÓNG CPU
 // Bọc Component Transcript bằng React.memo để ngăn re-render khi sóng âm hoặc thời gian thay đổi

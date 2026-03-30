@@ -5,30 +5,31 @@ import { Volume2 } from 'lucide-react';
 import styles from './page.module.scss';
 import MiniChatbot from '@/features/seo/components/MiniChatbot';
 
-// MOCK DATA cho Programmatic SEO
-const VOCAB_DATABASE: Record<string, any> = {
-  'procrastinate': {
-    word: 'Procrastinate',
-    phonetic: '/prəˈkræs.tə.neɪt/',
-    type: 'Verb (Động từ)',
-    meaning: 'Trì hoãn, chần chừ việc gì đó, đặc biệt là do lười biếng hoặc không muốn làm.',
-    example: 'I always procrastinate when it comes to doing my taxes.',
-    vietnameseExample: 'Tôi luôn chần chừ khi phải làm thủ tục đóng thuế.',
-    funFact: 'Người La Mã cổ đại không coi "Procrastinate" là từ xấu, họ coi đó là sự chờ đợi thời cơ chín muồi!',
-  },
-  'serendipity': {
-    word: 'Serendipity',
-    phonetic: '/ˌser.ənˈdɪp.ə.t̬i/',
-    type: 'Noun (Danh từ)',
-    meaning: 'Sự tình cờ phát hiện ra những điều tốt đẹp, may mắn một cách không ngờ tới.',
-    example: 'Finding that rare book in the dusty corner was pure serendipity.',
-    vietnameseExample: 'Tìm thấy cuốn sách hiếm đó ở góc bụi bặm thực sự là một sự tình cờ may mắn.',
-    funFact: 'Từ này được bình chọn là một trong những từ đẹp nhất trong tiếng Anh!',
+async function getVocabData(slug: string) {
+  try {
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+    const res = await fetch(`${baseUrl}/vocabulary/public/seo/${slug}`, {
+      next: { revalidate: 3600 } // ISR - Revalidate every hour
+    });
+    if (!res.ok) {
+      return null;
+    }
+    const text = await res.text();
+    try {
+       return JSON.parse(text);
+    } catch (e) {
+       console.error("Failed to parse JSON for seo word", text);
+       return null;
+    }
+  } catch (error) {
+    console.error('Failed to fetch SEO word:', error);
+    return null;
   }
-};
+}
 
-export async function generateMetadata({ params }: { params: { slug: string } }): Promise<Metadata> {
-  const data = VOCAB_DATABASE[params.slug.toLowerCase()];
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+  const resolvedParams = await params;
+  const data = await getVocabData(resolvedParams.slug.toLowerCase());
 
   if (!data) return { title: 'Not Found' };
 
@@ -42,8 +43,9 @@ export async function generateMetadata({ params }: { params: { slug: string } })
   };
 }
 
-export default function VocabularySeoPage({ params }: { params: { slug: string } }) {
-  const data = VOCAB_DATABASE[params.slug.toLowerCase()];
+export default async function VocabularySeoPage({ params }: { params: Promise<{ slug: string }> }) {
+  const resolvedParams = await params;
+  const data = await getVocabData(resolvedParams.slug.toLowerCase());
 
   if (!data) {
     notFound();

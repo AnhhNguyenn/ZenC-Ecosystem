@@ -71,6 +71,17 @@ export class VocabularyService {
   }
 
   /**
+   * Get a single vocabulary word by slug for SEO public pages.
+   */
+  async getSeoWord(slug: string): Promise<Vocabulary | null> {
+    // Attempt to match the word itself (case-insensitive).
+    // In a real app, you might have a dedicated 'slug' column.
+    return this.vocabRepo.findOne({
+      where: { word: slug } // Assuming slug matches word for now, or add ILike if supported
+    });
+  }
+
+  /**
    * Get user's personal word bank with mastery progress.
    */
   async getUserBank(

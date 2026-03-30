@@ -49,6 +49,11 @@ export default function RegisterPage() {
     }
   };
 
+  const handleSocialLogin = (provider: 'google' | 'apple') => {
+    console.log(`Initiating ${provider} signup...`);
+    // Example: window.location.href = `${process.env.NEXT_PUBLIC_API_URL}/auth/${provider}`;
+  };
+
   return (
     <div className={styles.container}>
       <div className={styles.logoWrapper}>
@@ -61,6 +66,33 @@ export default function RegisterPage() {
           <CardDescription>Join ZenC AI to master English conversation</CardDescription>
         </CardHeader>
         
+        <CardContent>
+          <div className={styles.socialAuth}>
+            <Button
+              variant="outline"
+              className={styles.socialButton}
+              onClick={() => handleSocialLogin('google')}
+              type="button"
+            >
+              <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="Google" width={20} height={20} />
+              Continue with Google
+            </Button>
+            <Button
+              variant="outline"
+              className={styles.socialButton}
+              onClick={() => handleSocialLogin('apple')}
+              type="button"
+            >
+              <img src="https://www.svgrepo.com/show/511330/apple-173.svg" alt="Apple" width={20} height={20} />
+              Continue with Apple
+            </Button>
+          </div>
+
+          <div className={styles.divider}>
+            <span>or sign up with email</span>
+          </div>
+        </CardContent>
+
         <form onSubmit={handleSubmit(onSubmit)}>
           <CardContent className={styles.formContent}>
             {error && (

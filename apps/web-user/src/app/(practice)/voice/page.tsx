@@ -139,7 +139,13 @@ export default function VoicePracticePage() {
       )}
 
       <main className={styles.main}>
-        <VoiceVisualizer state={state} audioLevel={0.5} />
+        {isActive ? (
+          <VoiceVisualizer state={state} audioLevel={0.5} />
+        ) : (
+          <div className={clsx(styles.visualizerPlaceholder, "pulse-placeholder")}>
+             <div className={styles.statusText}>Tap "Start Conversation" below to activate AI</div>
+          </div>
+        )}
 
         {latestCorrection && (
           <div className={styles.grammarBubble}>

@@ -10,31 +10,69 @@ interface VoiceVisualizerProps {
 }
 
 export const VoiceVisualizer: React.FC<VoiceVisualizerProps> = ({ state, audioLevel = 0 }) => {
-  // Simulate random wave movement when active
-  const [bars, setBars] = useState<number[]>(new Array(12).fill(10));
+  const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  const requestRef = React.useRef<number>(0);
 
   useEffect(() => {
-    if (state === 'idle') {
-      setBars(new Array(12).fill(10));
-      return;
-    }
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-    const interval = setInterval(() => {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Handle high DPI displays
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+
+    // Set actual canvas size
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+
+    // Normalize coordinate system to use css pixels
+    ctx.scale(dpr, dpr);
+
+    // Constants for drawing
+    const numBars = 12;
+    const gap = 4;
+    const totalGapWidth = (numBars - 1) * gap;
+    const barWidth = (rect.width - totalGapWidth) / numBars;
+    const centerY = rect.height / 2;
+
+    const animate = () => {
+      ctx.clearRect(0, 0, rect.width, rect.height);
       const now = Date.now() / 1000;
-      setBars(prev => prev.map((_, i) => {
-        if (state === 'thinking') {
-          // Gentle pulsing wave for "thinking" state
-          return 12 + Math.sin(now * 3 + i * 0.5) * 5;
-        }
-        // Drive bars from real audio level with organic wave offset
-        const wave = Math.sin(now * 4 + i * 0.8) * 0.3 + 0.7;
-        const base = 10;
-        const multiplier = state === 'speaking' || state === 'listening' ? 50 : 20;
-        return base + multiplier * audioLevel * wave;
-      }));
-    }, 80);
 
-    return () => clearInterval(interval);
+      for (let i = 0; i < numBars; i++) {
+        let height = 10; // Default base height
+
+        if (state === 'thinking') {
+           // Gentle pulsing wave for "thinking" state
+           height = 12 + Math.sin(now * 3 + i * 0.5) * 5;
+        } else if (state !== 'idle') {
+           // Active listening/speaking
+           const wave = Math.sin(now * 4 + i * 0.8) * 0.3 + 0.7;
+           const multiplier = state === 'speaking' || state === 'listening' ? 50 : 20;
+           height = 10 + multiplier * audioLevel * wave;
+        }
+
+        const x = i * (barWidth + gap);
+        const y = centerY - height / 2;
+
+        // Draw rounded rectangle
+        ctx.fillStyle = 'var(--color-primary)';
+        ctx.beginPath();
+        ctx.roundRect(x, y, barWidth, height, barWidth / 2);
+        ctx.fill();
+      }
+
+      requestRef.current = requestAnimationFrame(animate);
+    };
+
+    requestRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (requestRef.current) cancelAnimationFrame(requestRef.current);
+    };
   }, [state, audioLevel]);
 
   return (
@@ -46,13 +84,10 @@ export const VoiceVisualizer: React.FC<VoiceVisualizerProps> = ({ state, audioLe
       </div>
 
       <div className={styles.waveWrapper}>
-        {bars.map((height, i) => (
-          <div 
-            key={i} 
-            className={styles.bar} 
-            style={{ height: `${height}px` }} 
-          />
-        ))}
+        <canvas
+          ref={canvasRef}
+          style={{ width: '100%', height: '100px', display: 'block' }}
+        />
       </div>
 
       <div className={styles.statusText}>

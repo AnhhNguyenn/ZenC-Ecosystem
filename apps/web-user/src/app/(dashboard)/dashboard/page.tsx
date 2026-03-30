@@ -11,7 +11,7 @@ import {
   LearningProgress,
   ActivityFeed,
 } from "@/features/dashboard/components/DashboardWidgets";
-import { DashboardEmptyState } from "@/features/dashboard/components/EmptyState";
+import { EmptyState } from "@/components/ui/EmptyState/EmptyState";
 import { useUserQuery } from "@/hooks/useAuth"; // Reusing auth hook for profile payload which has stats
 
 export default function DashboardPage() {
@@ -31,7 +31,15 @@ export default function DashboardPage() {
   const isEmpty = mockStats.totalXp === 0;
 
   if (isEmpty && !isLoading) {
-    return <DashboardEmptyState />;
+    return (
+      <div>
+         <PageHeader
+          title={`Welcome back, ${user?.fullName || "Learner"}`}
+          subtitle="Here is your learning overview for today."
+        />
+        <EmptyState />
+      </div>
+    );
   }
 
   // 2. God-Page Anti-Pattern resolved: This file ONLY assembles components. No business logic.
@@ -49,7 +57,7 @@ export default function DashboardPage() {
 
       {/* 70/30 Split Layout Pattern Segment */}
       <DashboardGrid
-        mainFeature={<LearningProgress isLoading={isLoading} />}
+        mainFeature={<LearningProgress isLoading={isLoading} data={mockStats} />}
         secondaryPanel={<ActivityFeed isLoading={isLoading} />}
       />
     </div>

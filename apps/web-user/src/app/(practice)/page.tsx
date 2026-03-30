@@ -57,7 +57,7 @@ export default function PracticePage() {
             </p>
           </div>
           <div className={styles.cardFooter}>
-            <Button variant="outline" className={styles.startBtn}>
+            <Button variant="secondary" className={styles.startBtn}>
               Coming Soon
             </Button>
           </div>
@@ -76,7 +76,7 @@ export default function PracticePage() {
             </p>
           </div>
           <div className={styles.cardFooter}>
-            <Button variant="outline" className={styles.startBtn}>
+            <Button variant="secondary" className={styles.startBtn}>
               Coming Soon
             </Button>
           </div>

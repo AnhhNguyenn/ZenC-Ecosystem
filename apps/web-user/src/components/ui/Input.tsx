@@ -5,10 +5,11 @@ import styles from "./Input.module.scss";
 export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   error?: string;
+  icon?: React.ReactNode;
 }
 
 export const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, label, error, id, ...props }, ref) => {
+  ({ className, label, error, icon, id, ...props }, ref) => {
     const inputId = id || React.useId();
 
     return (
@@ -19,11 +20,13 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
           </label>
         )}
         <div className={styles.inputWrapper}>
+          {icon && <span className={styles.icon}>{icon}</span>}
           <input
             id={inputId}
             ref={ref}
             className={clsx(
               styles.input,
+              icon && styles.hasIcon,
               error && styles.errorInput
             )}
             {...props}

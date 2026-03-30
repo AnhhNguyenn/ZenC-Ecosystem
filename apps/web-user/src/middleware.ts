@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-const PUBLIC_PATHS = ['/login', '/register', '/landing', '/'];
+const PUBLIC_PATHS = ['/login', '/register', '/landing', '/', '/tu-vung'];
 
 export function middleware(request: NextRequest) {
   const url = request.nextUrl;
@@ -37,6 +37,11 @@ export function middleware(request: NextRequest) {
 
   // Public paths that don't require auth
   const isPublicPath = PUBLIC_PATHS.some(path => pathname === path || (path !== '/' && pathname.startsWith(path)));
+
+  // 3. ALLOW SEO PAGES PUBLICLY
+  if (pathname.startsWith('/tu-vung')) {
+      return NextResponse.next({ request: { headers: requestHeaders } });
+  }
 
   if (isPublicPath) {
     if (token) {

@@ -2,6 +2,7 @@ import React from "react";
 import { AppShell } from "../layouts/AppShell";
 import { Sidebar } from "../layouts/Sidebar";
 import { Home, BookOpen, Trophy, Settings } from "lucide-react";
+import { useTenant } from "@/features/b2b/TenantProvider";
 
 const userSections = [
   {
@@ -25,12 +26,14 @@ const userSections = [
 ];
 
 export function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const tenant = useTenant();
+
   const sidebar = (
     <Sidebar
       sections={userSections}
       header={
         <div style={{ fontWeight: 800, fontSize: "20px", color: "var(--color-primary)" }}>
-          ZenC.
+          {tenant.name}.
         </div>
       }
     />

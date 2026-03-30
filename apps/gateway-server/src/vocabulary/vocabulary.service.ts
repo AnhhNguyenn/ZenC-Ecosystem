@@ -5,7 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThanOrEqual, MoreThanOrEqual, LessThan } from 'typeorm';
+import { Repository, LessThanOrEqual, MoreThanOrEqual, LessThan, ILike } from 'typeorm';
 import { Vocabulary, UserVocabulary } from '../entities';
 
 /** Mastery level numeric constants */
@@ -71,13 +71,11 @@ export class VocabularyService {
   }
 
   /**
-   * Get a single vocabulary word by slug for SEO public pages.
+   * Get a single vocabulary word by word string for SEO public pages.
    */
-  async getSeoWord(slug: string): Promise<Vocabulary | null> {
-    // Attempt to match the word itself (case-insensitive).
-    // In a real app, you might have a dedicated 'slug' column.
+  async getSeoWord(word: string): Promise<Vocabulary | null> {
     return this.vocabRepo.findOne({
-      where: { word: slug } // Assuming slug matches word for now, or add ILike if supported
+      where: { word: ILike(word) }
     });
   }
 

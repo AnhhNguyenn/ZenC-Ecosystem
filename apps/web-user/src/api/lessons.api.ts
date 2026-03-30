@@ -25,16 +25,25 @@ export const lessonsApi = {
    * The server will verify the signature and timestamp to prevent script kids from
    * spoofing 50,000 XP via API replay attacks.
    */
-  submitProgress: async (payload: { lessonId: string; correctAnswers: number; totalQuestions: number }): Promise<any> => {
+  submitProgress: async (payload: { lessonId: string; answers: Array<{ exerciseId: string; answer: string; responseTimeMs: number }> }): Promise<any> => {
     // Dynamic import to prevent SSR issues with crypto if run outside browser
     const { generateAntiCheatSignature } = await import('../utils/crypto');
 
     const timestamp = Date.now();
-    const payloadStr = JSON.stringify(payload);
+
+    // Sort keys deterministically for the answers array so the hash matches the backend
+    const sortedAnswers = payload.answers.map(ans => ({
+      answer: ans.answer,
+      exerciseId: ans.exerciseId,
+      responseTimeMs: ans.responseTimeMs
+    })).sort((a, b) => a.exerciseId.localeCompare(b.exerciseId));
+
+    const payloadStr = payload.lessonId + JSON.stringify(sortedAnswers);
     const signature = await generateAntiCheatSignature(payloadStr, timestamp);
 
     const response = await apiClient.post<any>("/progress/submit-answer", {
-      ...payload,
+      lessonId: payload.lessonId,
+      answers: payload.answers,
       timestamp,
       signature
     });

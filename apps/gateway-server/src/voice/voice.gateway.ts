@@ -16,6 +16,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { EventEmitter } from 'events';
+import * as Sentry from '@sentry/nestjs';
 import { GeminiService } from './gemini.service';
 import { OpenAIRealtimeService } from './openai-realtime.service';
 import { RedisService } from '../common/redis.service';
@@ -829,94 +830,88 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ): Promise<void> {
     if (!data) return;
     try {
-      const sessionId = this.socketSessions.get(client.id);
-      if (!sessionId) {
-        client.emit('error', { message: 'No active session' });
-        return;
-      }
-
-      const buffer = this.jitterBuffers.get(client.id);
-      if (!buffer) return;
-
-      const isAuthorized = await this.ensureSessionAuthorizationFresh(client);
-      if (!isAuthorized) {
-        return;
-      }
-
-      const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
-      if (chunk.length === 0) {
-        return;
-      }
-
-      if (chunk.length > this.MAX_AUDIO_CHUNK_BYTES) {
-        this.logger.warn(
-          `Oversized audio chunk rejected for ${client.id}: ${chunk.length} bytes`,
-        );
-        client.emit('error', {
-          message: 'Audio chunk too large',
-          code: 'PAYLOAD_TOO_LARGE',
-        });
-        client.disconnect(true);
-        return;
-      }
-
-      // Reset Idle timeout if chunk is substantial (> 100 bytes)
-      if (chunk.length > 100) {
-        void this.resetTimeouts(client, true);
-      }
-
-      if (!this.allowAudioEvent(client.id)) {
-        this.logger.warn(`Audio rate limit exceeded for ${client.id}`);
-        client.emit('error', {
-          message: 'Audio rate limit exceeded',
-          code: 'RATE_LIMITED',
-        });
-        client.disconnect(true);
-        return;
-      }
-
-      buffer.push(chunk);
-
-      if (buffer.length >= this.JITTER_BUFFER_SIZE) {
-        const concatenated = Buffer.concat(buffer);
-        this.jitterBuffers.set(client.id, []);
-
-        const audioDurationSec =
-          concatenated.length / this.getSocketAudioBytesPerSecond();
-
-        // Dynamic Pricing: Fetch rate from config or default to 25 tokens/sec
-        const configRateStr = await this.redis.getClient().get('SYSTEM_CONFIG:AUDIO_PRICE_PER_SECOND');
-        const ratePerSecond = configRateStr ? parseInt(configRateStr, 10) : 25;
-
-        const estimatedTokens = Math.ceil(audioDurationSec * ratePerSecond);
-        const isRateLimited = await this.trackTokenUsage(client, estimatedTokens);
-        if (isRateLimited) {
+      // FIX Bom 12: Distributed Tracing for STT/AI Pipeline (using new v8 SDK approach)
+      return Sentry.startSpan({ name: "Process Audio Chunk", op: "voice_processing" }, async () => {
+        const sessionId = this.socketSessions.get(client.id);
+        if (!sessionId) {
+          client.emit('error', { message: 'No active session' });
           return;
         }
 
-        // Forward to active provider
-        const provider = this.socketProviders.get(client.id);
-        if (provider === 'openai') {
-          this.openaiService.sendAudioChunk(sessionId, concatenated);
-        } else {
-          this.geminiService.sendAudioChunk(sessionId, concatenated);
+        const buffer = this.jitterBuffers.get(client.id);
+        if (!buffer) return;
+
+        const isAuthorized = await this.ensureSessionAuthorizationFresh(client);
+        if (!isAuthorized) {
+          return;
         }
-      }
+
+        const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+        if (chunk.length === 0) {
+          return;
+        }
+
+        if (chunk.length > this.MAX_AUDIO_CHUNK_BYTES) {
+          this.logger.warn(
+            `Oversized audio chunk rejected for ${client.id}: ${chunk.length} bytes`,
+          );
+          client.emit('error', {
+            message: 'Audio chunk too large',
+            code: 'PAYLOAD_TOO_LARGE',
+          });
+          client.disconnect(true);
+          return;
+        }
+
+        // Reset Idle timeout if chunk is substantial (> 100 bytes)
+        if (chunk.length > 100) {
+          void this.resetTimeouts(client, true);
+        }
+
+        if (!this.allowAudioEvent(client.id)) {
+          this.logger.warn(`Audio rate limit exceeded for ${client.id}`);
+          client.emit('error', {
+            message: 'Audio rate limit exceeded',
+            code: 'RATE_LIMITED',
+          });
+          client.disconnect(true);
+          return;
+        }
+
+        buffer.push(chunk);
+
+        if (buffer.length >= this.JITTER_BUFFER_SIZE) {
+          const concatenated = Buffer.concat(buffer);
+          this.jitterBuffers.set(client.id, []);
+
+          const audioDurationSec =
+            concatenated.length / this.getSocketAudioBytesPerSecond();
+
+          // Dynamic Pricing: Fetch rate from config or default to 25 tokens/sec
+          const configRateStr = await this.redis.getClient().get('SYSTEM_CONFIG:AUDIO_PRICE_PER_SECOND');
+          const ratePerSecond = configRateStr ? parseInt(configRateStr, 10) : 25;
+
+          const estimatedTokens = Math.ceil(audioDurationSec * ratePerSecond);
+          const isRateLimited = await this.trackTokenUsage(client, estimatedTokens);
+          if (isRateLimited) {
+            return;
+          }
+
+          // Forward to active provider
+          const provider = this.socketProviders.get(client.id);
+          Sentry.startSpan({ op: 'llm_audio_forward', name: `Forwarding to ${provider}` }, () => {
+            if (provider === 'openai') {
+              this.openaiService.sendAudioChunk(sessionId, concatenated);
+            } else {
+              this.geminiService.sendAudioChunk(sessionId, concatenated);
+            }
+          });
+        }
+      });
     } catch (error) {
       this.logger.error(
         `Audio chunk handling error: ${(error as Error).message}`,
       );
-    }
-  }
-
-  // ═══════════════════════════════════════════════════════════════
-  // CONVERSATION MODE MANAGEMENT
-  // ═══════════════════════════════════════════════════════════════
-
-  /**
-   * Switch conversation mode mid-session.
-   *
-   * Supported modes:
     }
   }
 

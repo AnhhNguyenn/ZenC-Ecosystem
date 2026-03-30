@@ -79,9 +79,9 @@ export class VocabularyController {
          word: vocab.word,
          phonetic: vocab.phonetic || '/.../',
          type: vocab.partOfSpeech || 'Word',
-         meaning: vocab.translation || '', // Use translation as meaning for SEO
+         meaning: vocab.translation,
          example: vocab.exampleSentence || '',
-         vietnameseExample: vocab.exampleTranslation || '', // Use exampleTranslation
+         vietnameseExample: vocab.exampleTranslation || '',
          funFact: 'Did you know? Every word has a story.', // Mocked fun fact for now
        };
     }

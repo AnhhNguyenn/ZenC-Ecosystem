@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThanOrEqual } from 'typeorm';
+import { Repository, MoreThanOrEqual, In } from 'typeorm';
 import {
+  Exercise,
   ExerciseAttempt,
   UserVocabulary,
   Session,
@@ -9,6 +10,8 @@ import {
   Streak,
   UserMistake,
 } from '../entities';
+import { RedisService } from '../common/redis.service';
+import { SubmitAnswerItemDto } from './progress.dto';
 
 /**
  * ProgressService – Aggregated learning analytics dashboard.
@@ -25,6 +28,9 @@ import {
 export class ProgressService {
   private readonly logger = new Logger(ProgressService.name);
 
+  /** Minimum response time in ms before flagging as suspicious */
+  private readonly SUSPICIOUS_SPEED_MS = 500;
+
   constructor(
     @InjectRepository(ExerciseAttempt) private readonly attemptRepo: Repository<ExerciseAttempt>,
     @InjectRepository(UserVocabulary) private readonly userVocabRepo: Repository<UserVocabulary>,
@@ -32,6 +38,8 @@ export class ProgressService {
     @InjectRepository(DailyGoal) private readonly goalRepo: Repository<DailyGoal>,
     @InjectRepository(Streak) private readonly streakRepo: Repository<Streak>,
     @InjectRepository(UserMistake) private readonly mistakeRepo: Repository<UserMistake>,
+    @InjectRepository(Exercise) private readonly exerciseRepo: Repository<Exercise>,
+    private readonly redis: RedisService,
   ) {}
 
   /**
@@ -190,6 +198,207 @@ export class ProgressService {
       : 0;
 
     return { grammar, vocabulary, speaking, listening, reading };
+  }
+
+  /**
+   * Evaluate a user's answer against the correct answer.
+   */
+  private _evaluateAnswer(
+    exercise: Exercise,
+    userAnswer: string,
+  ): { isCorrect: boolean; score: number } {
+    const normalized = this._normalizeAnswer(userAnswer);
+    const correctNormalized = this._normalizeAnswer(exercise.correctAnswer);
+
+    switch (exercise.type) {
+      case 'MCQ':
+        return {
+          isCorrect: normalized === correctNormalized,
+          score: normalized === correctNormalized ? 100 : 0,
+        };
+
+      case 'FILL_BLANK': {
+        if (normalized === correctNormalized) {
+          return { isCorrect: true, score: 100 };
+        }
+        if (exercise.acceptableAnswersJson) {
+          try {
+            const alternatives: string[] = JSON.parse(exercise.acceptableAnswersJson);
+            const found = alternatives.some(
+              (alt) => this._normalizeAnswer(alt) === normalized,
+            );
+            if (found) return { isCorrect: true, score: 100 };
+          } catch {
+            // Malformed JSON – ignore alternatives
+          }
+        }
+        return { isCorrect: false, score: 0 };
+      }
+
+      case 'REORDER': {
+        try {
+          const userOrder: string[] = JSON.parse(userAnswer);
+          const correctOrder: string[] = JSON.parse(exercise.correctAnswer);
+
+          if (userOrder.length !== correctOrder.length) {
+            return { isCorrect: false, score: 0 };
+          }
+
+          let correctPositions = 0;
+          for (let i = 0; i < correctOrder.length; i++) {
+            if (
+              this._normalizeAnswer(userOrder[i]) ===
+              this._normalizeAnswer(correctOrder[i])
+            ) {
+              correctPositions++;
+            }
+          }
+
+          const score = Math.round((correctPositions / correctOrder.length) * 100);
+          return {
+            isCorrect: score === 100,
+            score,
+          };
+        } catch {
+          return { isCorrect: false, score: 0 };
+        }
+      }
+
+      case 'MATCHING': {
+        try {
+          const userPairs: Array<{ left: string; right: string }> = JSON.parse(userAnswer);
+          const correctPairs: Array<{ left: string; right: string }> = JSON.parse(exercise.correctAnswer);
+
+          let correctCount = 0;
+          for (const up of userPairs) {
+            const match = correctPairs.find(
+              (cp) =>
+                this._normalizeAnswer(cp.left) === this._normalizeAnswer(up.left) &&
+                this._normalizeAnswer(cp.right) === this._normalizeAnswer(up.right),
+            );
+            if (match) correctCount++;
+          }
+
+          const score = Math.round((correctCount / correctPairs.length) * 100);
+          return {
+            isCorrect: score === 100,
+            score,
+          };
+        } catch {
+          return { isCorrect: false, score: 0 };
+        }
+      }
+
+      case 'SPEAKING':
+      case 'LISTENING':
+        return {
+          isCorrect: normalized === correctNormalized,
+          score: normalized === correctNormalized ? 100 : 0,
+        };
+
+      default:
+        return { isCorrect: false, score: 0 };
+    }
+  }
+
+  private _normalizeAnswer(answer: string): string {
+    return answer
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, ' ')
+      .replace(/['']/g, "'")
+      .replace(/[""]/g, '"');
+  }
+
+  private _sanitizeInput(input: string): string {
+    return input
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .substring(0, 2000);
+  }
+
+  /**
+   * Submit progress and calculate XP based strictly on server-side answers.
+   */
+  async submitProgressAndCalculateXp(
+    userId: string,
+    lessonId: string,
+    answers: SubmitAnswerItemDto[]
+  ): Promise<{ xpEarned: number }> {
+    if (answers.length === 0) {
+      return { xpEarned: 0 };
+    }
+
+    const exerciseIds = answers.map((a) => a.exerciseId);
+    const exercises = await this.exerciseRepo.find({
+      where: { id: In(exerciseIds) }
+    });
+
+    const exerciseMap = new Map<string, Exercise>();
+    for (const ex of exercises) {
+      exerciseMap.set(ex.id, ex);
+    }
+
+    let totalXpEarned = 0;
+    const attemptRecords = [];
+
+    // Calculate XP securely on the backend
+    for (const ans of answers) {
+      const exercise = exerciseMap.get(ans.exerciseId);
+      if (!exercise || exercise.lessonId !== lessonId) {
+        // Skip invalid exercises or those not belonging to the given lesson
+        continue;
+      }
+
+      const isSuspicious = ans.responseTimeMs < this.SUSPICIOUS_SPEED_MS && exercise.type !== 'MCQ';
+
+      const { isCorrect, score } = this._evaluateAnswer(exercise, ans.answer);
+
+      // Assume this is their first attempt for the lesson bulk submit
+      // (a real system might do `count` on previous attempts, but we keep it fast here)
+      const attemptPenalty = 1.0;
+      const xpEarned = isCorrect
+        ? Math.round(exercise.points * attemptPenalty * (isSuspicious ? 0 : 1))
+        : 0;
+
+      totalXpEarned += xpEarned;
+
+      const attempt = this.attemptRepo.create({
+        userId,
+        exerciseId: exercise.id,
+        userAnswer: this._sanitizeInput(ans.answer),
+        isCorrect,
+        score,
+        xpEarned,
+        responseTimeMs: ans.responseTimeMs,
+        attemptNumber: 1, // Simplified for batch
+      });
+      attemptRecords.push(attempt);
+    }
+
+    if (attemptRecords.length > 0) {
+      await this.attemptRepo.save(attemptRecords);
+    }
+
+    if (totalXpEarned > 0) {
+      const today = new Date().toISOString().split('T')[0];
+      await this.goalRepo
+        .createQueryBuilder()
+        .update(DailyGoal)
+        .set({
+          xpEarned: () => `xpEarned + ${totalXpEarned}`,
+          exercisesCompleted: () => `exercisesCompleted + ${answers.length}`,
+        })
+        .where('userId = :userId AND date = :today', { userId, today })
+        .execute();
+
+      await this.redis.addLeaderboardXp(userId, totalXpEarned);
+    }
+
+    this.logger.log(`User ${userId} earned ${totalXpEarned} XP for lesson ${lessonId}`);
+
+    return { xpEarned: totalXpEarned };
   }
 
   private _calculateLevel(totalXp: number): number {

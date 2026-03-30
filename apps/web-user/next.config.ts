@@ -2,6 +2,11 @@ import type { NextConfig } from "next";
 import path from "path";
 
 const nextConfig: NextConfig = {
+  compiler: {
+    // Dọn sạch rác Console.log trên Production (Giảm dung lượng file và bảo mật)
+    removeConsole: process.env.NODE_ENV === 'production',
+  },
+
   reactStrictMode: true,
   sassOptions: {
     includePaths: [path.join(__dirname, 'src/styles')],

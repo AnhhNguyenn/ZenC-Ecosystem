@@ -3,7 +3,7 @@
 import React from 'react';
 import { clsx } from 'clsx';
 import { useVoiceSession } from '@/hooks/useVoiceSession';
-import { VoiceVisualizer } from '@/features/voice/VoiceVisualizer';
+import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui/Button';
 import { Mic, MicOff, PhoneOff, PhoneCall, Settings2, Play } from 'lucide-react';
 import styles from './page.module.scss';
@@ -11,7 +11,38 @@ import { Card } from '@/components/ui/Card';
 import { useAuth } from '@/features/auth/AuthContext';
 import { RewardScreen } from '@/features/voice/RewardScreen';
 import { SettingsModal } from '@/features/voice/SettingsModal';
-import { useState } from 'react';
+import { useState, memo } from 'react';
+
+// TẦNG 2: GIẢM CÂN APP (Bundle Size) - BẰNG DYNAMIC IMPORTS
+const VoiceVisualizer = dynamic(
+  () => import('@/features/voice/VoiceVisualizer').then(mod => mod.VoiceVisualizer),
+  { ssr: false }
+);
+
+// TẦNG 3: CÁCH LY TRẠNG THÁI (State Isolation) - CHỐNG NÓNG CPU
+// Bọc Component Transcript bằng React.memo để ngăn re-render khi sóng âm hoặc thời gian thay đổi
+const TranscriptView = memo(({ transcript, isActive }: { transcript: { ai: string; user: string }, isActive: boolean }) => (
+  <Card className={styles.transcriptCard}>
+    {transcript.ai && (
+      <p className={styles.aiText}>
+        <strong>AI:</strong> {transcript.ai}
+      </p>
+    )}
+    {transcript.user && (
+      <p className={styles.userText}>
+        <strong>You:</strong> {transcript.user}
+      </p>
+    )}
+    {!transcript.ai && !transcript.user && (
+      <p className={styles.placeholderText}>
+        {isActive
+          ? 'Conversation will appear here...'
+          : 'Tap "Start Conversation" to begin speaking with the AI tutor.'}
+      </p>
+    )}
+  </Card>
+));
+TranscriptView.displayName = 'TranscriptView';
 
 export default function VoicePracticePage() {
   const { token } = useAuth();
@@ -32,6 +63,7 @@ export default function VoicePracticePage() {
     isPaused,
     resumeSession,
     latestCorrection,
+    permissionDenied,
   } = useVoiceSession({ token });
 
   const isActive = state !== 'idle';
@@ -52,6 +84,20 @@ export default function VoicePracticePage() {
 
   return (
     <div className={styles.container}>
+      {permissionDenied && (
+        <div className={styles.pausedOverlay}>
+          <div className={styles.pausedContent}>
+            <h2>Mic Permission Denied 🔒</h2>
+            <p>
+              Trình duyệt đã chặn quyền truy cập Micro. Bạn cần bấm vào biểu tượng <strong>Ổ Khóa (🔒)</strong> trên thanh địa chỉ, chọn "Cho phép Micro", sau đó tải lại trang!
+            </p>
+            <Button size="lg" onClick={() => window.location.reload()} className={styles.resumeBtn} variant="primary">
+              Đã mở quyền, Tải lại trang
+            </Button>
+          </div>
+        </div>
+      )}
+
       {isPaused && (
         <div className={styles.pausedOverlay}>
           <div className={styles.pausedContent}>
@@ -101,25 +147,7 @@ export default function VoicePracticePage() {
           </div>
         )}
 
-        <Card className={styles.transcriptCard}>
-          {transcript.ai && (
-            <p className={styles.aiText}>
-              <strong>AI:</strong> {transcript.ai}
-            </p>
-          )}
-          {transcript.user && (
-            <p className={styles.userText}>
-              <strong>You:</strong> {transcript.user}
-            </p>
-          )}
-          {!transcript.ai && !transcript.user && (
-            <p className={styles.placeholderText}>
-              {isActive
-                ? 'Conversation will appear here...'
-                : 'Tap "Start Conversation" to begin speaking with the AI tutor.'}
-            </p>
-          )}
-        </Card>
+        <TranscriptView transcript={transcript} isActive={isActive} />
       </main>
 
       <footer className={styles.controls}>

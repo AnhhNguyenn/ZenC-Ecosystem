@@ -485,12 +485,13 @@ export class RedisService implements OnModuleDestroy {
    * Append a transcript line to the Redis List for a session.
    * Expires after 2 hours (sessions longer than that should checkpoint anyway).
    */
-  async appendTranscriptLine(sessionId: string, role: 'user' | 'ai', text: string): Promise<void> {
+  async appendTranscriptLine(sessionId: string, role: 'user' | 'ai', text: string, isMinor: boolean = false): Promise<void> {
     try {
       const key = `transcript:${sessionId}`;
       const entry = JSON.stringify({ role, text, ts: Date.now() });
       await this.client.rpush(key, entry);
-      await this.client.expire(key, 7200); // 2 hours TTL
+      // [COPPA] Enforce short TTL for minors (Ephemeral Mode)
+      await this.client.expire(key, isMinor ? 3600 : 7200);
     } catch (error) {
       this.logger.error(`Failed to append transcript for ${sessionId}`, error);
     }

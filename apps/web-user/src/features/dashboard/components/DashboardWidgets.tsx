@@ -7,7 +7,8 @@ import {
   CardContent,
 } from "@/components/ui/Card";
 import { Skeleton } from "@/components/ui/Skeleton";
-import { DashboardEmptyState } from "./EmptyState";
+import { EmptyState } from "@/components/ui/EmptyState/EmptyState";
+import { Flame } from "lucide-react";
 
 // 1. STATS: 4-Card System Rule Enforced Here
 export function DashboardStats({
@@ -48,8 +49,9 @@ export function DashboardStats({
           <CardDescription>Consecutive days</CardDescription>
         </CardHeader>
         <CardContent>
-          <div style={{ fontSize: "24px", fontWeight: 700 }}>
-            {data?.currentStreak || 0} 🔥
+          <div style={{ fontSize: "24px", fontWeight: 700, display: "flex", alignItems: "center", gap: "4px" }}>
+            {data?.currentStreak || 0}
+            <Flame size={24} color="#f97316" />
           </div>
         </CardContent>
       </Card>

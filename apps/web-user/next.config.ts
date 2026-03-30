@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 import path from "path";
 
 const nextConfig: NextConfig = {
+  // @ts-ignore
+  swcMinify: true,
   compiler: {
     // Dọn sạch rác Console.log trên Production (Giảm dung lượng file và bảo mật)
     removeConsole: process.env.NODE_ENV === 'production',

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { clsx } from 'clsx';
 import styles from './VoiceVisualizer.module.scss';
 
@@ -9,7 +9,7 @@ interface VoiceVisualizerProps {
   audioLevel?: number; // 0-1
 }
 
-export const VoiceVisualizer: React.FC<VoiceVisualizerProps> = ({ state, audioLevel = 0 }) => {
+const VoiceVisualizer: React.FC<VoiceVisualizerProps> = ({ state, audioLevel = 0 }) => {
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const requestRef = React.useRef<number>(0);
 
@@ -99,3 +99,5 @@ export const VoiceVisualizer: React.FC<VoiceVisualizerProps> = ({ state, audioLe
     </div>
   );
 };
+
+export default VoiceVisualizer;

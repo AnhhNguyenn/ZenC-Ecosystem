@@ -35,9 +35,22 @@ export class RedisService implements OnModuleDestroy {
       maxRetriesPerRequest: 3,
     };
 
-    this.client = new Redis(redisConfig);
-    this.subscriber = new Redis(redisConfig);
-    this.publisher = new Redis(redisConfig);
+    // FIX Bom 6: Separate cluster for PubSub to prevent OOM Eviction killing socket connections.
+    // If REDIS_PUBSUB_HOST is provided, use it. Otherwise fallback to main Redis.
+    const pubSubHost = this.config.get<string>('REDIS_PUBSUB_HOST');
+    const pubSubPortStr = this.config.get<string>('REDIS_PUBSUB_PORT');
+    const pubSubPassword = this.config.get<string>('REDIS_PUBSUB_PASSWORD');
+
+    const redisPubSubConfig = {
+      ...redisConfig,
+      host: pubSubHost || redisConfig.host,
+      port: pubSubPortStr ? Number(pubSubPortStr) : redisConfig.port,
+      password: pubSubPassword !== undefined ? pubSubPassword : redisConfig.password,
+    };
+
+    this.client = new Redis(redisConfig as any);
+    this.subscriber = new Redis(redisPubSubConfig as any);
+    this.publisher = new Redis(redisPubSubConfig as any);
 
     this.client.on('connect', () => this.logger.log('Redis client connected'));
     this.client.on('error', (err) => this.logger.error('Redis client error', err));
@@ -485,12 +498,13 @@ export class RedisService implements OnModuleDestroy {
    * Append a transcript line to the Redis List for a session.
    * Expires after 2 hours (sessions longer than that should checkpoint anyway).
    */
-  async appendTranscriptLine(sessionId: string, role: 'user' | 'ai', text: string): Promise<void> {
+  async appendTranscriptLine(sessionId: string, role: 'user' | 'ai', text: string, isMinor: boolean = false): Promise<void> {
     try {
       const key = `transcript:${sessionId}`;
       const entry = JSON.stringify({ role, text, ts: Date.now() });
       await this.client.rpush(key, entry);
-      await this.client.expire(key, 7200); // 2 hours TTL
+      // [COPPA] Enforce short TTL for minors (Ephemeral Mode)
+      await this.client.expire(key, isMinor ? 3600 : 7200);
     } catch (error) {
       this.logger.error(`Failed to append transcript for ${sessionId}`, error);
     }

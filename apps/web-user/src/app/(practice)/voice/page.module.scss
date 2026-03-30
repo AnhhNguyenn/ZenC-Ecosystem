@@ -244,6 +244,19 @@
   }
 }
 
+.visualizerPlaceholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  width: 100%;
+  border-radius: var(--radius-lg);
+  background-color: var(--color-background-alt);
+  border: 1px dashed var(--color-border);
+  margin-bottom: var(--spacing-md);
+  color: var(--color-text-secondary);
+}
+
 .resumeBtn {
   margin-top: var(--spacing-4);
   font-size: var(--font-size-lg);

@@ -254,6 +254,13 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
         if (sourceNodeRef.current) {
            sourceNodeRef.current.disconnect();
         }
+
+        // Disable audio tracks to save battery without stopping them
+        if (mediaStreamRef.current) {
+          mediaStreamRef.current.getAudioTracks().forEach((track) => {
+            track.enabled = false;
+          });
+        }
       }
       // Note: We don't auto-resume when visible. User must click "Resume".
     };
@@ -287,8 +294,25 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
       await audioContextRef.current.resume();
     }
 
-    // Re-grab microphone and connect
-    await reNegotiateAudio();
+    // Re-enable existing audio tracks instead of re-grabbing, unless the stream was lost
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getAudioTracks().forEach((track) => {
+        track.enabled = true;
+      });
+
+      // Re-connect the source node if it was disconnected
+      if (sourceNodeRef.current && processorRef.current && audioContextRef.current) {
+        try {
+          sourceNodeRef.current.connect(processorRef.current);
+        } catch (e) {
+          // Ignore if already connected
+          console.log('[Voice] Reconnecting source node', e);
+        }
+      }
+    } else {
+      // Re-grab microphone and connect if stream is missing
+      await reNegotiateAudio();
+    }
 
     // Instruct backend to resume
     socketService.emit('client_resumed', {});

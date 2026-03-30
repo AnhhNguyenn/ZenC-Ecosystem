@@ -11,7 +11,7 @@ import {
   LearningProgress,
   ActivityFeed,
 } from "@/features/dashboard/components/DashboardWidgets";
-import { EmptyState } from "@/components/ui/EmptyState/EmptyState";
+import { DashboardEmptyState } from "@/features/dashboard/components/EmptyState";
 import { useUserQuery } from "@/hooks/useAuth"; // Reusing auth hook for profile payload which has stats
 
 export default function DashboardPage() {
@@ -37,7 +37,7 @@ export default function DashboardPage() {
           title={`Welcome back, ${user?.fullName || "Learner"}`}
           subtitle="Here is your learning overview for today."
         />
-        <EmptyState />
+        <DashboardEmptyState />
       </div>
     );
   }

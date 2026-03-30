@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+import { AuthButtons } from "../AuthButtons";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -56,24 +57,7 @@ export default function LoginPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className={styles.socialAuth}>
-              <Button
-                variant="outline"
-                className={styles.socialButton}
-                onClick={() => handleSocialLogin('google')}
-              >
-                <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="Google" width={20} height={20} />
-                Continue with Google
-              </Button>
-              <Button
-                variant="outline"
-                className={styles.socialButton}
-                onClick={() => handleSocialLogin('apple')}
-              >
-                <img src="https://www.svgrepo.com/show/511330/apple-173.svg" alt="Apple" width={20} height={20} />
-                Continue with Apple
-              </Button>
-            </div>
+            <AuthButtons onSocialLogin={handleSocialLogin} />
 
             <div className={styles.divider}>
               <span>or sign in with email</span>

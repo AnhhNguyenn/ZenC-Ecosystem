@@ -61,4 +61,11 @@ export class UserProfile {
    */
   @Column({ type: 'decimal', precision: 3, scale: 2, default: 1.0 })
   speakingSpeedMultiplier!: number;
+
+  /**
+   * COPPA Compliance flag. If true, learner is under 13.
+   * Enforces Ephemeral Mode (no disk storage, no profiling).
+   */
+  @Column({ type: 'boolean', default: false })
+  isMinor!: boolean;
 }

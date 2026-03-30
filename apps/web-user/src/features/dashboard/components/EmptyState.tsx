@@ -9,8 +9,8 @@ export function DashboardEmptyState() {
   return (
     <div className={styles.emptyStateContainer}>
       <div className={styles.illustrationWrapper}>
-        <div className={styles.mascotPlaceholder}>
-          🦊
+        <div className={styles.botIconContainer}>
+          <Bot className={styles.botIcon} size={64} />
         </div>
       </div>
 
@@ -26,7 +26,7 @@ export function DashboardEmptyState() {
         className={styles.ctaButton}
         onClick={() => router.push('/voice')}
       >
-        BẮT ĐẦU TRÒ CHUYỆN CÙNG AI
+        Bắt đầu bài test AI ngay
         <div className={styles.pulseRing}></div>
       </button>
     </div>

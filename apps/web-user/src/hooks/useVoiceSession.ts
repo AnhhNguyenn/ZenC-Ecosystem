@@ -24,11 +24,24 @@ export type VoiceState = 'idle' | 'listening' | 'thinking' | 'speaking';
  */
 export function useVoiceSession({ token }: UseVoiceSessionProps) {
   const [state, setState] = useState<VoiceState>('idle');
-  const [transcript, setTranscript] = useState<{ ai: string; user: string }>({ ai: '', user: '' });
+  const [transcript, setTranscript] = useState<{ ai: string; user: string }>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('draft_lesson_state');
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch (e) {
+          console.error("Failed to parse draft_lesson_state", e);
+        }
+      }
+    }
+    return { ai: '', user: '' };
+  });
   const [isConnected, setIsConnected] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [latestCorrection, setLatestCorrection] = useState<string | null>(null);
+  const [permissionDenied, setPermissionDenied] = useState<boolean>(false);
 
   // Audio refs
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -183,8 +196,12 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
       processorRef.current = processor;
 
       console.log('[Voice] Microphone started, native rate:', nativeSampleRate);
-    } catch (err) {
+      setPermissionDenied(false);
+    } catch (err: any) {
       console.error('[Voice] Microphone access error:', err);
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+         setPermissionDenied(true);
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -302,7 +319,11 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
 
     socket.on('ai_transcript', (data: { text: string }) => {
       setState('thinking');
-      setTranscript((prev) => ({ ...prev, ai: data.text }));
+      setTranscript((prev) => {
+        const next = { ...prev, ai: data.text };
+        localStorage.setItem('draft_lesson_state', JSON.stringify(next));
+        return next;
+      });
     });
 
     // AI audio arrives → queue it
@@ -322,7 +343,11 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
 
     socket.on('user_transcript', (data: { text: string }) => {
       setState('thinking');
-      setTranscript((prev) => ({ ...prev, user: data.text }));
+      setTranscript((prev) => {
+        const next = { ...prev, user: data.text };
+        localStorage.setItem('draft_lesson_state', JSON.stringify(next));
+        return next;
+      });
     });
 
     // Grammar correction feedback
@@ -360,6 +385,7 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
     setState('idle');
     setTranscript({ ai: '', user: '' });
     setLatestCorrection(null);
+    localStorage.removeItem('draft_lesson_state');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -395,5 +421,6 @@ export function useVoiceSession({ token }: UseVoiceSessionProps) {
     isMuted,
     isPaused,
     latestCorrection,
+    permissionDenied,
   };
 }

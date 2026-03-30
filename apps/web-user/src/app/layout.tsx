@@ -12,6 +12,15 @@ export const metadata: Metadata = {
   title: "ZenC AI - Conversational English Mastery",
   description: "Master English with real-time AI conversation practice.",
   metadataBase: new URL('https://zenc.ai'),
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'ZenC AI',
+  },
+  formatDetection: {
+    telephone: false,
+  },
 };
 
 export default async function RootLayout({

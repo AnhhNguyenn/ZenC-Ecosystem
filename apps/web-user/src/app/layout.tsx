@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google"; // Using Google Font for premium look
 import "@/styles/globals.scss";
 import { AuthProvider } from '@/features/auth/AuthContext';
@@ -21,6 +21,10 @@ export const metadata: Metadata = {
   formatDetection: {
     telephone: false,
   },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#FFFFFF",
 };
 
 export default async function RootLayout({

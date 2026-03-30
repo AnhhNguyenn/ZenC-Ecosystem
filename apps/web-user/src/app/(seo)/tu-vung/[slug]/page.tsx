@@ -5,7 +5,17 @@ import { Volume2 } from 'lucide-react';
 import styles from './page.module.scss';
 import MiniChatbot from '@/features/seo/components/MiniChatbot';
 
-async function getVocabData(slug: string) {
+interface VocabularyData {
+  word: string;
+  phonetic: string;
+  type: string;
+  meaning: string;
+  example: string;
+  vietnameseExample: string;
+  funFact: string;
+}
+
+async function getVocabData(slug: string): Promise<VocabularyData | null> {
   try {
     const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
     const res = await fetch(`${baseUrl}/vocabulary/public/seo/${slug}`, {
@@ -16,7 +26,7 @@ async function getVocabData(slug: string) {
     }
     const text = await res.text();
     try {
-       return JSON.parse(text);
+       return JSON.parse(text) as VocabularyData;
     } catch (e) {
        console.error("Failed to parse JSON for seo word", text);
        return null;

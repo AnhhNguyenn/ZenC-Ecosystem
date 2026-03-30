@@ -7,6 +7,7 @@ import {
   CardContent,
 } from "@/components/ui/Card";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { EmptyState } from "@/components/ui/EmptyState/EmptyState";
 
 // 1. STATS: 4-Card System Rule Enforced Here
 export function DashboardStats({
@@ -81,9 +82,16 @@ export function DashboardStats({
 }
 
 // 2. MAIN FEATURE: 70% Layout Focus Component
-export function LearningProgress({ isLoading }: { isLoading: boolean }) {
+export function LearningProgress({ isLoading, data }: { isLoading: boolean; data?: any }) {
   if (isLoading) {
     return <Skeleton style={{ height: "400px" }} />;
+  }
+
+  // Check if it's a new user with no lessons/XP
+  const isNewUser = !data?.totalXp && !data?.lessonsCompleted;
+
+  if (isNewUser) {
+    return <EmptyState />;
   }
 
   return (

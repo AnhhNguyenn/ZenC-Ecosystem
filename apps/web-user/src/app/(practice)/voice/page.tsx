@@ -5,13 +5,22 @@ import { clsx } from 'clsx';
 import { useVoiceSession } from '@/hooks/useVoiceSession';
 import { VoiceVisualizer } from '@/features/voice/VoiceVisualizer';
 import { Button } from '@/components/ui/Button';
-import { Mic, MicOff, PhoneOff, PhoneCall, Settings2 } from 'lucide-react';
+import { Mic, MicOff, PhoneOff, PhoneCall, Settings2, Play } from 'lucide-react';
 import styles from './page.module.scss';
 import { Card } from '@/components/ui/Card';
 import { useAuth } from '@/features/auth/AuthContext';
+import { RewardScreen } from '@/features/voice/RewardScreen';
+import { SettingsModal } from '@/features/voice/SettingsModal';
+import { useState } from 'react';
 
 export default function VoicePracticePage() {
   const { token } = useAuth();
+  const [showReward, setShowReward] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [voiceSettings, setVoiceSettings] = useState({
+    vnSupportEnabled: true,
+    speakingSpeed: 1.0,
+  });
   const {
     connect,
     disconnect,
@@ -20,6 +29,9 @@ export default function VoicePracticePage() {
     transcript,
     isConnected,
     isMuted,
+    isPaused,
+    resumeSession,
+    latestCorrection,
   } = useVoiceSession({ token });
 
   const isActive = state !== 'idle';
@@ -27,13 +39,32 @@ export default function VoicePracticePage() {
   const handleToggleSession = () => {
     if (isActive) {
       disconnect();
+      // Show reward screen immediately upon ending session
+      setShowReward(true);
     } else {
-      connect();
+      connect(voiceSettings);
     }
   };
 
+  if (showReward) {
+    return <RewardScreen xpEarned={50} coinsEarned={15} onClose={() => setShowReward(false)} />;
+  }
+
   return (
     <div className={styles.container}>
+      {isPaused && (
+        <div className={styles.pausedOverlay}>
+          <div className={styles.pausedContent}>
+            <h2>Buổi học đang tạm dừng</h2>
+            <p>Trình duyệt đã tạm ngắt kết nối âm thanh để tiết kiệm pin.</p>
+            <Button size="lg" onClick={resumeSession} className={styles.resumeBtn}>
+              <Play size={20} style={{ marginRight: '8px' }} />
+              Bấm để tiếp tục
+            </Button>
+          </div>
+        </div>
+      )}
+
       <header className={styles.header}>
         <div className={styles.sessionInfo}>
           <h1 className={styles.title}>Free Talk Session</h1>
@@ -41,13 +72,34 @@ export default function VoicePracticePage() {
             {isConnected ? 'Online' : 'Offline'}
           </span>
         </div>
-        <Button variant="ghost" size="icon" aria-label="Settings">
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Settings"
+          onClick={() => setShowSettings(true)}
+          disabled={isActive}
+          title={isActive ? "Không thể đổi cài đặt khi đang trong buổi học" : "Cài đặt"}
+        >
           <Settings2 size={24} />
         </Button>
       </header>
 
+      {showSettings && (
+        <SettingsModal
+          initialSettings={voiceSettings}
+          onClose={() => setShowSettings(false)}
+          onSave={(settings) => setVoiceSettings(settings)}
+        />
+      )}
+
       <main className={styles.main}>
         <VoiceVisualizer state={state} audioLevel={0.5} />
+
+        {latestCorrection && (
+          <div className={styles.grammarBubble}>
+            <span className={styles.correctionLabel}>💡 Sửa lỗi:</span> {latestCorrection}
+          </div>
+        )}
 
         <Card className={styles.transcriptCard}>
           {transcript.ai && (

@@ -12,7 +12,7 @@ export const useLoginMutation = () => {
       // Rule: Set Access Token strictly in memory
       setAccessToken(data.accessToken);
       // Rule: Hydrate React Query cache immediately to prevent redundant fetching
-      queryClient.setQueryData(queryKeys.user.profile, data.user);
+      queryClient.setQueryData(queryKeys.admin.profile, data.user);
     },
   });
 };
@@ -35,7 +35,7 @@ export const useLogoutMutation = () => {
 
 export const useUserQuery = () => {
   return useQuery({
-    queryKey: queryKeys.user.profile,
+    queryKey: queryKeys.admin.profile,
     queryFn: () => authApi.getCurrentUser(),
     retry: false, // Prevents React Query from aggressively hitting 401s if unauthenticated
     staleTime: 5 * 60 * 1000, // 5 minutes

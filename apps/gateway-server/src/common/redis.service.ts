@@ -35,9 +35,22 @@ export class RedisService implements OnModuleDestroy {
       maxRetriesPerRequest: 3,
     };
 
-    this.client = new Redis(redisConfig);
-    this.subscriber = new Redis(redisConfig);
-    this.publisher = new Redis(redisConfig);
+    // FIX Bom 6: Separate cluster for PubSub to prevent OOM Eviction killing socket connections.
+    // If REDIS_PUBSUB_HOST is provided, use it. Otherwise fallback to main Redis.
+    const pubSubHost = this.config.get<string>('REDIS_PUBSUB_HOST');
+    const pubSubPortStr = this.config.get<string>('REDIS_PUBSUB_PORT');
+    const pubSubPassword = this.config.get<string>('REDIS_PUBSUB_PASSWORD');
+
+    const redisPubSubConfig = {
+      ...redisConfig,
+      host: pubSubHost || redisConfig.host,
+      port: pubSubPortStr ? Number(pubSubPortStr) : redisConfig.port,
+      password: pubSubPassword !== undefined ? pubSubPassword : redisConfig.password,
+    };
+
+    this.client = new Redis(redisConfig as any);
+    this.subscriber = new Redis(redisPubSubConfig as any);
+    this.publisher = new Redis(redisPubSubConfig as any);
 
     this.client.on('connect', () => this.logger.log('Redis client connected'));
     this.client.on('error', (err) => this.logger.error('Redis client error', err));

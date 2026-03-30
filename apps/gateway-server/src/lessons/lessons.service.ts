@@ -331,8 +331,8 @@ export class LessonsService {
       const totalScore = attempts.reduce((sum, a) => sum + (a.bestScore ?? 0), 0);
       serverScore = Math.round(totalScore / exerciseIds.length);
     } else {
-      // Lesson has no exercises – use client score as fallback
-      serverScore = dto.score;
+      // Lesson has no exercises
+      serverScore = 100;
     }
 
     // Validate minimum passing score

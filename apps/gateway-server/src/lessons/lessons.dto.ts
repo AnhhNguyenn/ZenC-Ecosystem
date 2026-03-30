@@ -137,12 +137,6 @@ export class CreateLessonDto {
 
 /** Lesson completion request with exercise results */
 export class CompleteLessonDto {
-  /** Total score across all exercises (0–100) */
-  @IsInt()
-  @Min(0)
-  @Max(100)
-  score!: number;
-
   /** Time spent on the lesson in seconds */
   @IsInt()
   @Min(0)

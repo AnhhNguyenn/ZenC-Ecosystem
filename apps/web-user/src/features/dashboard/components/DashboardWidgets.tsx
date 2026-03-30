@@ -7,7 +7,7 @@ import {
   CardContent,
 } from "@/components/ui/Card";
 import { Skeleton } from "@/components/ui/Skeleton";
-import { EmptyState } from "@/components/ui/EmptyState/EmptyState";
+import { DashboardEmptyState } from "./EmptyState";
 
 // 1. STATS: 4-Card System Rule Enforced Here
 export function DashboardStats({
@@ -91,7 +91,7 @@ export function LearningProgress({ isLoading, data }: { isLoading: boolean; data
   const isNewUser = !data?.totalXp && !data?.lessonsCompleted;
 
   if (isNewUser) {
-    return <EmptyState />;
+    return <DashboardEmptyState />;
   }
 
   return (

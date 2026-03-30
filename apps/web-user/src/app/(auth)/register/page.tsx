@@ -12,6 +12,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Logo } from '@/components/ui/Logo';
 import { Mail, Lock, User } from 'lucide-react';
 import styles from './page.module.scss'; // Reuse/adapt structure
+import { AuthButtons } from '../AuthButtons';
 
 const registerSchema = z.object({
   fullName: z.string().min(2, 'Name must be at least 2 characters'),
@@ -67,26 +68,7 @@ export default function RegisterPage() {
         </CardHeader>
         
         <CardContent>
-          <div className={styles.socialAuth}>
-            <Button
-              variant="outline"
-              className={styles.socialButton}
-              onClick={() => handleSocialLogin('google')}
-              type="button"
-            >
-              <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="Google" width={20} height={20} />
-              Continue with Google
-            </Button>
-            <Button
-              variant="outline"
-              className={styles.socialButton}
-              onClick={() => handleSocialLogin('apple')}
-              type="button"
-            >
-              <img src="https://www.svgrepo.com/show/511330/apple-173.svg" alt="Apple" width={20} height={20} />
-              Continue with Apple
-            </Button>
-          </div>
+          <AuthButtons onSocialLogin={handleSocialLogin} />
 
           <div className={styles.divider}>
             <span>or sign up with email</span>

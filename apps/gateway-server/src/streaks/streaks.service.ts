@@ -92,12 +92,14 @@ export class StreaksService {
       throw new BadRequestException('Already used a freeze today');
     }
 
-    streak.freezesRemaining -= 1;
-    streak.lastFreezeUsedAt = today;
-    streak.lastActiveDate = today; // Count frozen day as active
-    await this.streakRepo.save(streak);
+    // Use atomic update to prevent race conditions on double-click
+    await this.streakRepo.update(streak.id, {
+      freezesRemaining: () => '"freezesRemaining" - 1',
+      lastFreezeUsedAt: today,
+      lastActiveDate: today,
+    });
 
-    this.logger.log(`Streak freeze used by ${userId}. Remaining: ${streak.freezesRemaining}`);
+    this.logger.log(`Streak freeze used by ${userId}.`);
 
     return {
       success: true,

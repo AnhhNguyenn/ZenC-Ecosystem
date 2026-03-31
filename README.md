@@ -88,6 +88,9 @@ Hệ thống quản lý hàng chục nghìn kết nối realtime và tính toán
 3.  **Circuit Breaker & Fallback:** Bất kỳ external API nào (LLM, TTS) cũng phải đi qua Circuit Breaker để tránh tắc nghẽn event-loop khi đối tác sập.
 4.  **No Zombie Pods:** Cấu hình timeout chặt chẽ (Ping/Pong) và Deep Health Check `/health` để K8s tự động dọn dẹp các tiến trình chết lâm sàng.
 5.  **Dual Database Architecture:** PostgreSQL được dùng cho transaction/relational data (billing, progress, user profiles). MongoDB được dùng riêng cho các dữ liệu unstructured/document (transcripts, AI highlights, audit change snapshots).
+6.  **K8s Security & Secrets Management:** TUYỆT ĐỐI không nhúng file `.env` vào image Docker hoặc mount thô bạo (raw mount) trên Production. Bạn phải tạo **Kubernetes Secret** chứa tất cả Key (JWT, Mongo URI, LLM Keys...) bằng lệnh:
+    `kubectl create secret generic zenc-secrets-prod --from-env-file=.env -n zenc-production`
+    Và sử dụng `envFrom: secretRef` trong các file Deployment.
 
 > 💣 Hệ thống vừa được gỡ bỏ 12 "Quả bom nổ chậm" liên quan đến kiến trúc (Tham khảo lịch sử Commit). Mọi PR mới phải tuân thủ nghiêm ngặt chuẩn định tuyến, Error handling bằng Queue (RabbitMQ DLX) và Caching phân tách (Pub/Sub vs Cache).
 

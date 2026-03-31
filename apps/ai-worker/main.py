@@ -18,6 +18,10 @@ from fastapi import Depends, FastAPI, HTTPException, Response, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from config import get_settings
 from events.pubsub_listener import pubsub_listener
@@ -61,6 +65,21 @@ logging.basicConfig(
 logger = logging.getLogger("zenc.worker")
 
 settings = get_settings()
+
+def user_id_and_ip_key_builder(request):
+    ip = get_remote_address(request)
+    try:
+        body = json.loads(request._body)
+        user_id = body.get("userId", "anonymous")
+    except Exception:
+        user_id = "anonymous"
+    return f"{ip}:{user_id}"
+
+limiter = Limiter(
+    key_func=user_id_and_ip_key_builder,
+    storage_uri=f"redis://:{settings.REDIS_PASSWORD}@{settings.REDIS_HOST}:{settings.REDIS_PORT}/0" if settings.REDIS_PASSWORD else f"redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}/0",
+)
+
 scheduler = AsyncIOScheduler()
 redis_client: aioredis.Redis | None = None
 component_status = {
@@ -74,7 +93,7 @@ internal_service_key = os.getenv("ADMIN_SECRET_KEY", "")
 
 
 class PronunciationAssessRequest(BaseModel):
-    audioBase64: str = Field(min_length=1, max_length=8_000_000)
+    audioUrl: str = Field(min_length=1, max_length=2000)
     referenceText: str = Field(min_length=1, max_length=5000)
     userId: str = Field(min_length=1, max_length=255)
 
@@ -130,25 +149,33 @@ async def _run_singleton_job(
         return await job_func(*job_args)
 
     lock_key = f"cron_lock:{job_id}"
-    token = str(uuid.uuid4())
-    acquired = await redis_client.set(lock_key, token, ex=lock_ttl_seconds, nx=True)
-    if not acquired:
-        logger.info("Skipping cron '%s' because another worker holds the lock", job_id)
-        return {"skipped": True}
+    from aioredlock import Aioredlock, LockError
+
+    # Aioredlock expects a list of redis instances (can be a cluster)
+    if settings.REDIS_PASSWORD:
+        redis_uri = f"redis://:{settings.REDIS_PASSWORD}@{settings.REDIS_HOST}:{settings.REDIS_PORT}/0"
+    else:
+        redis_uri = f"redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}/0"
+
+    if settings.REDIS_TLS.lower() == "true":
+        redis_uri = redis_uri.replace("redis://", "rediss://")
+
+    lock_manager = Aioredlock([redis_uri])
 
     try:
-        return await job_func(*job_args)
+        # aioredlock automatically handles lock extension (heartbeat) under the hood
+        # but we also set a lock_timeout matching ttl
+        async with await lock_manager.lock(lock_key, lock_timeout=lock_ttl_seconds):
+            logger.info("Acquired Redlock for cron '%s'", job_id)
+            return await job_func(*job_args)
+    except LockError:
+        logger.info("Skipping cron '%s' because another worker holds the lock", job_id)
+        return {"skipped": True}
+    except Exception as exc:
+        logger.error("Error executing cron '%s': %s", job_id, exc)
+        raise
     finally:
-        try:
-            await redis_client.eval(
-                "if redis.call('get', KEYS[1]) == ARGV[1] then "
-                "return redis.call('del', KEYS[1]) else return 0 end",
-                1,
-                lock_key,
-                token,
-            )
-        except Exception as exc:
-            logger.warning("Failed to release cron lock for %s: %s", job_id, exc)
+        await lock_manager.destroy()
 
 
 @asynccontextmanager
@@ -168,12 +195,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
 
     try:
-        redis_client = aioredis.Redis(
-            host=settings.REDIS_HOST,
-            port=settings.REDIS_PORT,
-            password=settings.REDIS_PASSWORD or None,
-            decode_responses=True,
-        )
+        redis_kwargs = {
+            "host": settings.REDIS_HOST,
+            "port": settings.REDIS_PORT,
+            "password": settings.REDIS_PASSWORD or None,
+            "decode_responses": True,
+        }
+
+        if settings.REDIS_TLS.lower() == "true":
+            redis_kwargs["ssl"] = True
+
+        if settings.REDIS_CLUSTER.lower() == "true":
+            from redis.asyncio.cluster import RedisCluster
+            redis_client = RedisCluster(
+                startup_nodes=[{"host": settings.REDIS_HOST, "port": settings.REDIS_PORT}],
+                password=settings.REDIS_PASSWORD or None,
+                decode_responses=True,
+                ssl=redis_kwargs.get("ssl", False)
+            )
+        else:
+            redis_client = aioredis.Redis(**redis_kwargs)
+
         await redis_client.ping()
         component_status["redis"] = True
         logger.info("Redis connected")
@@ -323,6 +365,9 @@ app = FastAPI(
     version="3.0.0",
     lifespan=lifespan,
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 _raw_origins = os.getenv(
     "CORS_ALLOWED_ORIGINS", "http://localhost:3001,http://localhost:3002"
@@ -361,14 +406,17 @@ async def health_check(response: Response) -> dict:
     }
 
 
+from fastapi import Request
+
 @app.post(
     "/api/v1/pronunciation/assess",
     tags=["Pronunciation"],
     dependencies=[Depends(require_internal_service)],
 )
-async def pronunciation_assess(payload: PronunciationAssessRequest) -> dict:
+@limiter.limit("5/minute")
+async def pronunciation_assess(request: Request, payload: PronunciationAssessRequest) -> dict:
     result = await assess_pronunciation(
-        audio_base64=payload.audioBase64,
+        audio_url=payload.audioUrl,
         reference_text=payload.referenceText,
         user_id=payload.userId,
     )
@@ -420,7 +468,61 @@ async def get_weekly_report(user_id: str) -> dict:
         if cached:
             return json.loads(cached)
 
-    return {"error": "No report available. Reports are generated weekly."}
+    # Cache miss: Dispatch async generation and return an empty state
+    async def generate_and_notify():
+        from services.learning_analytics import generate_weekly_report
+        from database import async_session_factory
+        import asyncio
+
+        if not redis_client:
+            return
+
+        try:
+            async with async_session_factory() as session:
+                report = await generate_weekly_report(user_id, session)
+
+            await redis_client.set(
+                f"weekly_report:{user_id}",
+                json.dumps(report),
+                ex=604800,
+            )
+
+            # Publish event to notify client
+            await redis_client.publish(
+                "analytics_ready",
+                json.dumps({"userId": user_id})
+            )
+        except Exception as e:
+            logger.error(f"Async analytics generation failed for {user_id}: {e}")
+
+    # Fire and forget
+    asyncio.create_task(generate_and_notify())
+
+    return {
+        "status": "processing",
+        "message": "Learning analytics report is being generated.",
+        "data": {
+            "userId": user_id,
+            "totalXp": 0,
+            "lessonsCompleted": 0,
+            "exerciseAccuracy": 0,
+            "voiceMinutes": 0,
+            "vocabLearned": 0,
+            "streakDays": 0,
+            "skillRadar": {
+                "grammar": 0,
+                "vocabulary": 0,
+                "speaking": 0,
+                "listening": 0,
+                "reading": 0,
+            },
+            "comparedToLastWeek": {
+                "xpChange": 0,
+                "accuracyChange": 0,
+                "timeChange": 0,
+            },
+        }
+    }
 
 
 @app.get("/", tags=["System"])
@@ -462,7 +564,8 @@ async def conversation_evaluate_endpoint(payload: ConversationEvaluateRequest) -
     tags=["Grammar"],
     dependencies=[Depends(require_internal_service)],
 )
-async def grammar_check_endpoint(payload: GrammarCheckRequest) -> dict:
+@limiter.limit("5/minute")
+async def grammar_check_endpoint(request: Request, payload: GrammarCheckRequest) -> dict:
     return await check_grammar_realtime(
         text=payload.text,
         user_id=payload.userId,

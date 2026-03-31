@@ -308,7 +308,7 @@ class PubSubListener:
         Process a pronunciation_assess event from the Gateway.
 
         Flow:
-        1. Parse the JSON payload (assessmentId, audioBase64, referenceText)
+        1. Parse the JSON payload (assessmentId, audioUrl, referenceText)
         2. Run pronunciation scoring via Gemini
         3. Update problem sounds profile
         4. Store result in Redis for Gateway polling
@@ -322,11 +322,11 @@ class PubSubListener:
             return
 
         assessment_id = payload.get("assessmentId")
-        audio_base64 = payload.get("audioBase64", "")
+        audio_url = payload.get("audioUrl", "")
         reference_text = payload.get("referenceText", "")
         user_id = payload.get("userId")
 
-        if not assessment_id or not audio_base64 or not user_id:
+        if not assessment_id or not audio_url or not user_id:
             logger.warning("Incomplete pronunciation payload")
             return
 
@@ -335,7 +335,7 @@ class PubSubListener:
             update_problem_sounds,
         )
 
-        result = await assess_pronunciation(audio_base64, reference_text, user_id)
+        result = await assess_pronunciation(audio_url, reference_text, user_id)
 
         # Store result in Redis for Gateway polling
         if self._redis:

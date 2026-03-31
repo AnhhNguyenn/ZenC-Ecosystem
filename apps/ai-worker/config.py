@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     REDIS_PASSWORD: str = ""
+    REDIS_TLS: str = "false"
+    REDIS_CLUSTER: str = "false"
 
     RABBITMQ_URL: str = "amqp://guest:guest@localhost:5672/"
 

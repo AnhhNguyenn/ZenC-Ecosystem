@@ -10,6 +10,8 @@ import { RabbitMQModule } from './common/rabbitmq.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { BullModule } from '@nestjs/bullmq';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
+import Redis from 'ioredis';
 
 // ── Feature Modules ──────────────────────────────────────────
 import { AuthModule } from './auth/auth.module';
@@ -122,10 +124,38 @@ import { SocialModule } from './social/social.module';
 
     // ── Infrastructure ────────────────────────────────────────
     ScheduleModule.forRoot(),
-    ThrottlerModule.forRoot([{
-      ttl: 60000,
-      limit: 100,
-    }]),
+    ThrottlerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => {
+        const host = config.get<string>('REDIS_HOST', 'localhost');
+        const port = config.get<number>('REDIS_PORT', 6379);
+        const password = config.get<string>('REDIS_PASSWORD');
+        const tlsEnabled = config.get<string>('REDIS_TLS') === 'true';
+
+        const redisOptions: any = {
+          host,
+          port,
+          password,
+        };
+
+        if (tlsEnabled) {
+          redisOptions.tls = {};
+        }
+
+        const redisClient = new Redis(redisOptions);
+
+        return {
+          throttlers: [
+            {
+              ttl: 60000,
+              limit: 100,
+            },
+          ],
+          storage: new ThrottlerStorageRedisService(redisClient),
+        };
+      },
+    }),
     RedisModule,
     RabbitMQModule,
     BullModule.forRootAsync({

@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { InjectModel } from '@nestjs/mongoose';
 import { Repository, MoreThan } from 'typeorm';
+import { Model } from 'mongoose';
 import { Conversation } from '../entities/conversation.entity';
+import { ConversationDoc, ConversationDocument } from './schemas/conversation.schema';
 import { RedisService } from '../common/redis.service';
 
 /**
@@ -21,6 +24,8 @@ export class ConversationService {
   constructor(
     @InjectRepository(Conversation)
     private readonly conversationRepo: Repository<Conversation>,
+    @InjectModel(ConversationDocument.name)
+    private readonly conversationModel: Model<ConversationDoc>,
     private readonly redis: RedisService,
   ) {}
 
@@ -47,6 +52,13 @@ export class ConversationService {
     });
 
     const saved = await this.conversationRepo.save(conversation);
+
+    // Create MongoDB document linked via conversationId
+    await this.conversationModel.create({
+      conversationId: saved.id,
+      userId: data.userId,
+    });
+
     this.logger.log(
       `Conversation created: ${saved.id} (mode: ${data.mode}, provider: ${data.provider})`,
     );
@@ -70,13 +82,23 @@ export class ConversationService {
       .split(/\s+/)
       .filter((w) => w.length > 0).length;
 
+    // Update relation data in PostgreSQL
     await this.conversationRepo.update(conversationId, {
-      transcript: data.transcript,
-      userTranscript: data.userTranscript,
       durationMinutes: Math.round(data.durationMinutes * 10) / 10,
       totalTokens: data.totalTokens,
       wordCount,
     });
+
+    // Update document data in MongoDB
+    await this.conversationModel.updateOne(
+      { conversationId },
+      {
+        $set: {
+          transcript: data.transcript,
+          userTranscript: data.userTranscript,
+        },
+      },
+    );
   }
 
   /**
@@ -96,16 +118,26 @@ export class ConversationService {
       vietnameseAdvice: string;
     },
   ): Promise<void> {
+    // Update relational score data in PostgreSQL
     await this.conversationRepo.update(conversationId, {
       fluencyScore: scores.fluency,
       accuracyScore: scores.accuracy,
       complexityScore: scores.complexity,
       coherenceScore: scores.coherence,
       overallScore: scores.overall,
-      highlights: JSON.stringify(scores.highlights),
-      improvements: JSON.stringify(scores.improvements),
-      vietnameseAdvice: scores.vietnameseAdvice,
     });
+
+    // Update evaluation text in MongoDB
+    await this.conversationModel.updateOne(
+      { conversationId },
+      {
+        $set: {
+          highlights: JSON.stringify(scores.highlights),
+          improvements: JSON.stringify(scores.improvements),
+          vietnameseAdvice: scores.vietnameseAdvice,
+        },
+      },
+    );
 
     this.logger.log(
       `Scores stored for conversation ${conversationId}: overall=${scores.overall}`,
@@ -179,19 +211,23 @@ export class ConversationService {
     userTranscript: string;
     annotations: unknown;
   } | null> {
+    // Validate owner
     const conv = await this.conversationRepo.findOne({
       where: { id: conversationId, userId },
-      select: ['transcript', 'userTranscript', 'highlights', 'improvements'],
+      select: ['id'],
     });
 
     if (!conv) return null;
 
+    const doc = await this.conversationModel.findOne({ conversationId });
+    if (!doc) return null;
+
     return {
-      transcript: conv.transcript || '',
-      userTranscript: conv.userTranscript || '',
+      transcript: doc.transcript || '',
+      userTranscript: doc.userTranscript || '',
       annotations: {
-        highlights: conv.highlights ? JSON.parse(conv.highlights) : [],
-        improvements: conv.improvements ? JSON.parse(conv.improvements) : [],
+        highlights: doc.highlights ? JSON.parse(doc.highlights) : [],
+        improvements: doc.improvements ? JSON.parse(doc.improvements) : [],
       },
     };
   }
@@ -218,15 +254,17 @@ export class ConversationService {
 
     if (!conv || conv.overallScore === null) return null;
 
+    const doc = await this.conversationModel.findOne({ conversationId });
+
     return {
       fluency: conv.fluencyScore || 0,
       accuracy: conv.accuracyScore || 0,
       complexity: conv.complexityScore || 0,
       coherence: conv.coherenceScore || 0,
       overall: conv.overallScore || 0,
-      highlights: conv.highlights ? JSON.parse(conv.highlights) : [],
-      improvements: conv.improvements ? JSON.parse(conv.improvements) : [],
-      vietnameseAdvice: conv.vietnameseAdvice || '',
+      highlights: doc?.highlights ? JSON.parse(doc.highlights) : [],
+      improvements: doc?.improvements ? JSON.parse(doc.improvements) : [],
+      vietnameseAdvice: doc?.vietnameseAdvice || '',
     };
   }
 

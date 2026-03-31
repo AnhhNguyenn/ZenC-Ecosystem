@@ -44,7 +44,19 @@ Hai AI provider chạy song song, phân vai rõ ràng:
 User speaks → STT → classifyIntent() [Groq, <1500ms] → CHAT (Gemini) or STUDY (Deep Brain queue)
 ```
 
-### 3.2 RabbitMQ — Queue Architecture (Phase G)
+### 3.2 Database & Storage Architecture (Phase G)
+
+Chúng ta sử dụng kiến trúc **Dual Database** để tối ưu hiệu suất và tiết kiệm chi phí lưu trữ:
+
+| Database | Loại | Data được lưu | Vai trò |
+|----------|------|---------------|---------|
+| **PostgreSQL 15+** | Relational | Users, Billing, Scores, Metadata | Dữ liệu cấu trúc tĩnh, yêu cầu tính toàn vẹn (ACID) cao. |
+| **MongoDB 6+** | Document | Transcripts, Highlights, ChangeLogs | Dữ liệu unstructured/JSON lớn. Tránh phình to bảng Postgres. |
+| **Qdrant** | Vector | Content Embeddings, Lesson Plans | Lưu trữ Vector phục vụ RAG (Retrieval-Augmented Generation). |
+
+*Lưu ý: Mọi Entity liên quan tới Document Storage phải có trường tham chiếu (vd: `conversationId`) nối giữa Postgres và MongoDB.*
+
+### 3.3 RabbitMQ — Queue Architecture (Phase G)
 
 **Cấm dùng Redis làm queue!** Redis chỉ được phép dùng cho:
 - Rate Limiting (`INCR` + `EXPIRE`)
@@ -61,7 +73,7 @@ User speaks → STT → classifyIntent() [Groq, <1500ms] → CHAT (Gemini) or ST
 
 **Retry strategy:** `nack(requeue=True)` on failure → tự động requeue. Dead Letter Queue (DLQ) cần setup thêm nếu muốn giới hạn retry count.
 
-### 3.3 WebSocket Event Handlers (voice.gateway.ts)
+### 3.4 WebSocket Event Handlers (voice.gateway.ts)
 
 Tất cả `@SubscribeMessage` handlers phải có:
 ```typescript
@@ -69,13 +81,13 @@ if (!data) return;                    // Null guard — bắt buộc
 try { ... } catch (err) { ... }       // Crash isolation — bắt buộc
 ```
 
-### 3.4 Provider Failover Rules
+### 3.5 Provider Failover Rules
 
 - Max **2 lần** switch Gemini ↔ OpenAI per session (`switchAttempts` map).
 - Mutex guard `isSwitching` ngăn concurrent duplicate failover.
 - Failover inject **20 dòng transcript gần nhất** từ Redis để AI mới không mất context.
 
-### 3.5 Security Rules (Phase F)
+### 3.6 Security Rules (Phase F)
 
 - **JWT Refresh Token**: `crypto.sha256(token)` → `bcrypt.hash()`. KHÔNG bao giờ bcrypt raw JWT (truncation attack).
 - **Session cleanup**: Cron mỗi giờ xóa sessions có `endTime IS NULL` và `startTime < 2h trước` (zombie sessions).

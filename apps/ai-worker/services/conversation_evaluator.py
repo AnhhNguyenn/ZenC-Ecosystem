@@ -264,7 +264,8 @@ async def handle_conversation_evaluate(raw_data: str, redis_client) -> None:
             logger.error(
                 f"Failed to persist scores to DB: {db_err}", exc_info=True
             )
-            # Non-fatal: Redis cache still has the result
+            # Rethrow error to trigger RabbitMQ NACK & retry (ensuring data consistency)
+            raise db_err
 
     logger.info(
         f"Conversation score cached: {result_key} "

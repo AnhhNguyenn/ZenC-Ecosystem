@@ -45,12 +45,10 @@ export class Conversation {
   @Column({ length: 100, nullable: true })
   topicId!: string | null;
 
-  @Column({ type: 'varchar', nullable: true })
-  transcript!: string | null;
-
-  /** User-only transcript for analysis */
-  @Column({ type: 'varchar', nullable: true })
-  userTranscript!: string | null;
+  /**
+   * Transcript, highlights, and improvements are now stored in MongoDB
+   * using the same `id` (conversationId) to avoid bloating PostgreSQL.
+   */
 
   // ── Post-session scores (0-100, filled by Worker) ──────────
   @Column({ type: 'float', nullable: true })
@@ -67,18 +65,6 @@ export class Conversation {
 
   @Column({ type: 'float', nullable: true })
   overallScore!: number | null;
-
-  /** AI-generated highlights from the conversation */
-  @Column({ type: 'varchar', nullable: true })
-  highlights!: string | null;
-
-  /** AI-generated improvement suggestions */
-  @Column({ type: 'varchar', nullable: true })
-  improvements!: string | null;
-
-  /** Vietnamese-language advice */
-  @Column({ type: 'varchar', nullable: true })
-  vietnameseAdvice!: string | null;
 
   @Column({ type: 'float', default: 0 })
   durationMinutes!: number;

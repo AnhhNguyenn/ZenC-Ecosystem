@@ -9,7 +9,7 @@ ZenC là nền tảng học tiếng Anh giao tiếp AI thời gian thực (Real-
 ZenC được chia thành các phân hệ lõi (Monorepo):
 
 1.  **Reflex Brain (Gateway Server)** - `apps/gateway-server/`:
-    *   **Công nghệ:** NestJS, Socket.io, TypeORM (PostgreSQL), Redis.
+    *   **Công nghệ:** NestJS, Socket.io, TypeORM (PostgreSQL), Mongoose (MongoDB), Redis.
     *   **Vai trò:** Xử lý kết nối WebRTC/WebSocket thời gian thực, Rate Limiting, Billing (Token/s), Fallback Circuit Breaker (OpenAI ↔ Gemini).
 2.  **Deep Brain (AI Worker)** - `apps/ai-worker/` (Python):
     *   **Công nghệ:** FastAPI, Celery/RabbitMQ, Qdrant (Vector DB).
@@ -38,7 +38,7 @@ cp .env.example .env
 *(Tham khảo `docs/development-guide.md` để biết chi tiết các biến môi trường).*
 
 ### 3. Khởi động Hạ tầng (Infrastructure)
-Khởi động cơ sở dữ liệu Postgres, Redis, RabbitMQ và Qdrant qua Docker:
+Khởi động cơ sở dữ liệu Postgres, MongoDB, Redis, RabbitMQ và Qdrant qua Docker:
 ```bash
 docker-compose -f docker-compose.dev.yml up -d
 ```
@@ -87,6 +87,7 @@ Hệ thống quản lý hàng chục nghìn kết nối realtime và tính toán
 2.  **Zero-Trust Frontend:** Frontend tuyệt đối không tự tính điểm. Chỉ gửi tín hiệu submit kèm hash, Backend trả về kết quả.
 3.  **Circuit Breaker & Fallback:** Bất kỳ external API nào (LLM, TTS) cũng phải đi qua Circuit Breaker để tránh tắc nghẽn event-loop khi đối tác sập.
 4.  **No Zombie Pods:** Cấu hình timeout chặt chẽ (Ping/Pong) và Deep Health Check `/health` để K8s tự động dọn dẹp các tiến trình chết lâm sàng.
+5.  **Dual Database Architecture:** PostgreSQL được dùng cho transaction/relational data (billing, progress, user profiles). MongoDB được dùng riêng cho các dữ liệu unstructured/document (transcripts, AI highlights, audit change snapshots).
 
 > 💣 Hệ thống vừa được gỡ bỏ 12 "Quả bom nổ chậm" liên quan đến kiến trúc (Tham khảo lịch sử Commit). Mọi PR mới phải tuân thủ nghiêm ngặt chuẩn định tuyến, Error handling bằng Queue (RabbitMQ DLX) và Caching phân tách (Pub/Sub vs Cache).
 

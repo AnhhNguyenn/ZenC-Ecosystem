@@ -119,6 +119,24 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+// Request Queue for Token Refreshing (prevents data loss when multiple requests fail 401 simultaneously)
+let isRefreshing = false;
+let failedQueue: Array<{
+  resolve: (token: string) => void;
+  reject: (error: any) => void;
+}> = [];
+
+const processQueue = (error: any, token: string | null = null) => {
+  failedQueue.forEach((prom) => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token!);
+    }
+  });
+  failedQueue = [];
+};
+
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -132,16 +150,35 @@ apiClient.interceptors.response.use(
       !originalRequest._retry &&
       typeof window !== "undefined"
     ) {
+      if (isRefreshing) {
+        // If already refreshing, put this request in a holding queue
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject });
+        })
+          .then((token) => {
+            originalRequest.headers = originalRequest.headers ?? {};
+            originalRequest.headers.Authorization = `Bearer ${token}`;
+            return apiClient(originalRequest);
+          })
+          .catch((err) => Promise.reject(err));
+      }
+
       originalRequest._retry = true;
+      isRefreshing = true;
+
       try {
         const accessToken = await refreshAccessToken();
+        processQueue(null, accessToken);
         originalRequest.headers = originalRequest.headers ?? {};
         originalRequest.headers.Authorization = `Bearer ${accessToken}`;
         return apiClient(originalRequest);
       } catch (refreshError) {
+        processQueue(refreshError, null);
         setAccessToken(null);
         window.location.href = "/login";
         return Promise.reject(refreshError);
+      } finally {
+        isRefreshing = false;
       }
     }
 

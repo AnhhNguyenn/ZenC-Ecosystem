@@ -44,6 +44,7 @@ services:
       MONGO_INITDB_ROOT_USERNAME: "${MONGO_USER:-admin}"
       MONGO_INITDB_ROOT_PASSWORD: "${MONGO_PASSWORD:-ZenC@Str0ng!Pass2026}"
       MONGO_INITDB_DATABASE: "${MONGO_DATABASE:-zenc_ai_docs}"
+    command: ["--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
     ports:
       - "27017:27017"
     volumes:
@@ -54,6 +55,26 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  mongo-init:
+    image: mongo:6-jammy
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    command: >
+      bash -c "
+      sleep 2;
+      mongosh mongodb://${MONGO_USER:-admin}:${MONGO_PASSWORD:-ZenC@Str0ng!Pass2026}@mongodb:27017/?authSource=admin --eval '
+      try {
+        rs.status();
+      } catch (err) {
+        rs.initiate({
+          _id: \"rs0\",
+          members: [{ _id: 0, host: \"mongodb:27017\" }]
+        });
+      }
+      '
+      "
 
   qdrant:
     image: qdrant/qdrant:latest

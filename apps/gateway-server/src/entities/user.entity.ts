@@ -43,8 +43,14 @@ export class User {
    * Stored as integer (millitokens) rather than float to guarantee
    * precision during concurrent atomic decrements.
    */
+  @Index()
   @Column({ type: 'int', default: 0 })
   tokenBalance!: number;
+
+  /** Used for gamification leaderboard/progress tracking */
+  @Index()
+  @Column({ type: 'int', default: 0 })
+  totalXp!: number;
 
   @Column({
     type: 'varchar',

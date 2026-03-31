@@ -96,14 +96,35 @@ try { ... } catch (err) { ... }       // Crash isolation — bắt buộc
 
 ---
 
-## 4. Kubernetes Production Layout (Phase G)
+## 4. Hardware Requirements & Deployment Strategy (Phase G)
+
+ZenC AI được thiết kế theo kiến trúc Microservices và Cloud-Native (Docker/K8s). Toàn bộ sức mạnh tính toán AI nặng nhất (LLM, Voice, Text-to-Speech) đã được **đẩy lên các Cloud APIs** (Gemini, Groq, ElevenLabs).
+
+Do đó, hệ thống **KHÔNG CẦN CHẠY AI CỤC BỘ** và **TUYỆT ĐỐI KHÔNG CẦN THUÊ SERVER CÓ GPU (VGA)**. Việc thuê máy có GPU (như RTX 3060Ti, GTX 1080) là vô cùng lãng phí vì GPU sẽ ở mức 0% Usage.
+
+### 4.1. Cấu hình Server Đề Xuất (Dành cho VPS/Cloud Server)
+
+Bắt buộc sử dụng hệ điều hành **Linux (Ubuntu 22.04 LTS hoặc 24.04 LTS)** để chạy Docker Native với hiệu năng I/O tốt nhất. KHÔNG sử dụng Windows Server để chạy production.
+
+| Môi trường | Loại Server | OS | CPU | RAM | Storage | Ghi chú |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Dev / Staging (PoC)** | Single VPS | Ubuntu 22.04 | 4 Cores | 8GB - 16GB | 50GB NVMe | Đủ gánh toàn bộ DB (Postgres, Mongo, Redis, RMQ) + 2 Backend + 2 Frontend qua `docker-compose.dev.yml`. Chịu tải ~100-200 CCU. |
+| **Production (K8s Base)** | Cluster (3 Nodes) | Ubuntu 22.04 | 8 Cores/Node | 16GB/Node | 100GB/Node | High Availability. MongoDB chạy Replica Set (3 nodes). Postgres chạy Master/Slave. |
+
+### 4.2. Khuyến nghị Tối Ưu Chi Phí (Hybrid Cloud)
+Để tiết kiệm chi phí tối đa trong giai đoạn đầu ra mắt (Go-to-Market):
+1.  **Frontend (Web-User, Web-Admin):** Deploy miễn phí 100% lên Vercel (hoặc Netlify) tận dụng Edge CDN toàn cầu.
+2.  **Database:** Sử dụng các dịch vụ Managed DB miễn phí hoặc giá rẻ (MongoDB Atlas M0 Free, Supabase cho Postgres, Upstash cho Redis).
+3.  **Backend (Gateway & Worker):** Thuê 1 VPS Linux tầm trung (giá rẻ, không GPU) chạy Docker, kết nối URI tới các Database bên ngoài. (VPS chỉ tốn RAM chạy ứng dụng, không tốn RAM chạy Database).
+
+## 5. Kubernetes Production Layout (Phase G)
 
 ```
 k8s/
 ├── 01-namespaces.yaml       # zenc-production, zenc-monitoring
 ├── 04-api-deployment.yaml   # api-pool: 100–300 pods, 1 vCPU limit
 ├── 05-worker-deployment.yaml # worker-pool: 50–200 pods
-├── 06-ai-deployment.yaml    # ai-gpu-pool: NVIDIA GPU, 32Gi RAM
+├── 06-ai-deployment.yaml    # ai-gpu-pool: NVIDIA GPU, 32Gi RAM (Deprecated - Không còn dùng Model Local)
 ├── 08-hpa.yaml              # HPA: CPU + RMQ queue depth metrics
 ├── 09-ingress.yaml          # NGINX: 50 RPS, 15s timeout, circuit breaker
 └── 10-pgbouncer.yaml        # PgBouncer: 5000 clients → 100 PG connections

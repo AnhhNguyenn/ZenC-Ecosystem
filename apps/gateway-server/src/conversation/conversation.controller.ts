@@ -8,6 +8,7 @@ import {
   UseGuards,
   Req,
 } from '@nestjs/common';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { ConversationFeedbackBodyDto } from '../common/dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ConversationService } from './conversation.service';
@@ -27,7 +28,7 @@ import { ConversationService } from './conversation.service';
  * - POST /v1/conversations/:id/feedback  – User quality rating
  */
 @Controller({ path: 'conversations', version: '1' })
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ThrottlerGuard)
 export class ConversationController {
   constructor(private readonly conversationService: ConversationService) {}
 
@@ -86,6 +87,7 @@ export class ConversationController {
   }
 
   @Post(':id/feedback')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   async submitFeedback(
     @Req() req: any,
     @Param('id') id: string,

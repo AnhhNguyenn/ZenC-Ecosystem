@@ -26,7 +26,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
-from database import async_session_factory
+from database import async_session_factory, mongo_db
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +220,7 @@ async def handle_conversation_evaluate(raw_data: str, redis_client) -> None:
     # Persist scores to DB (long-term storage)
     if session_id and result.get("status") == "COMPLETED":
         try:
+            # 1. Update PostgreSQL for relational scores
             async with async_session_factory() as db_session:
                 from sqlalchemy import text
 
@@ -245,7 +246,20 @@ async def handle_conversation_evaluate(raw_data: str, redis_client) -> None:
                     },
                 )
                 await db_session.commit()
-                logger.info(f"Scores persisted to DB for session {session_id}")
+
+            # 2. Update MongoDB for document data (highlights, improvements, advice)
+            await mongo_db.conversations.update_one(
+                {"conversationId": session_id},
+                {
+                    "$set": {
+                        "highlights": json.dumps(result.get("highlights", [])),
+                        "improvements": json.dumps(result.get("improvements", [])),
+                        "vietnameseAdvice": result.get("vietnameseAdvice", "")
+                    }
+                },
+                upsert=True
+            )
+            logger.info(f"Scores persisted to both PostgreSQL and MongoDB for session {session_id}")
         except Exception as db_err:
             logger.error(
                 f"Failed to persist scores to DB: {db_err}", exc_info=True

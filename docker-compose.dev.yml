@@ -21,22 +21,39 @@ services:
     ports:
       - "6379:6379"
 
-  sql-server:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+  postgres:
+    image: postgres:15-alpine
     environment:
-      SA_PASSWORD: "${MSSQL_SA_PASSWORD:-ZenC@Str0ng!Pass2026}"
-      ACCEPT_EULA: "Y"
-      MSSQL_DB: "${MSSQL_DATABASE:-zenc_ai}"
+      POSTGRES_USER: "${PG_USER:-postgres}"
+      POSTGRES_PASSWORD: "${PG_PASSWORD:-ZenC@Str0ng!Pass2026}"
+      POSTGRES_DB: "${PG_DATABASE:-zenc_ai}"
     ports:
-      - "1433:1433"
+      - "5432:5432"
     volumes:
-      - mssql_data:/var/opt/mssql
+      - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: /opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P "$$SA_PASSWORD" -Q "SELECT 1" || exit 1
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-postgres} -d ${PG_DATABASE:-zenc_ai}"]
       interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 30s
+      retries: 5
+      start_period: 10s
+
+  mongodb:
+    image: mongo:6-jammy
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: "${MONGO_USER:-admin}"
+      MONGO_INITDB_ROOT_PASSWORD: "${MONGO_PASSWORD:-ZenC@Str0ng!Pass2026}"
+      MONGO_INITDB_DATABASE: "${MONGO_DATABASE:-zenc_ai_docs}"
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -68,10 +85,12 @@ services:
       - ./apps/gateway-server/nest-cli.json:/app/nest-cli.json
     environment:
       - NODE_ENV=development
-      - MSSQL_HOST=sql-server
-      - MSSQL_PORT=1433
-      - MSSQL_DATABASE=${MSSQL_DATABASE:-zenc_ai}
-      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD:-ZenC@Str0ng!Pass2026}
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=${PG_USER:-postgres}
+      - PG_PASSWORD=${PG_PASSWORD:-ZenC@Str0ng!Pass2026}
+      - PG_DATABASE=${PG_DATABASE:-zenc_ai}
+      - MONGO_URI=mongodb://${MONGO_USER:-admin}:${MONGO_PASSWORD:-ZenC@Str0ng!Pass2026}@mongodb:27017/${MONGO_DATABASE:-zenc_ai_docs}?authSource=admin
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
@@ -90,7 +109,9 @@ services:
       - DB_POOL_MIN=5
       - DB_POOL_MAX=50
     depends_on:
-      sql-server:
+      postgres:
+        condition: service_healthy
+      mongodb:
         condition: service_healthy
       redis:
         condition: service_started
@@ -187,10 +208,12 @@ services:
       - QDRANT_API_KEY=${QDRANT_API_KEY:-dev-qdrant-key}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_EMBEDDING_MODEL=${GEMINI_EMBEDDING_MODEL:-text-embedding-004}
-      - MSSQL_HOST=sql-server
-      - MSSQL_PORT=1433
-      - MSSQL_DATABASE=${MSSQL_DATABASE:-zenc_ai}
-      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD:-ZenC@Str0ng!Pass2026}
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=${PG_USER:-postgres}
+      - PG_PASSWORD=${PG_PASSWORD:-ZenC@Str0ng!Pass2026}
+      - PG_DATABASE=${PG_DATABASE:-zenc_ai}
+      - MONGO_URI=mongodb://${MONGO_USER:-admin}:${MONGO_PASSWORD:-ZenC@Str0ng!Pass2026}@mongodb:27017/${MONGO_DATABASE:-zenc_ai_docs}?authSource=admin
       - AI_PROVIDER_TIMEOUT_SECONDS=10
       - DB_POOL_SIZE=10
       - DB_MAX_OVERFLOW=20
@@ -200,7 +223,9 @@ services:
         condition: service_started
       qdrant:
         condition: service_healthy
-      sql-server:
+      postgres:
+        condition: service_healthy
+      mongodb:
         condition: service_healthy
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
@@ -217,5 +242,6 @@ services:
     profiles: [test]
 
 volumes:
-  mssql_data:
+  pg_data:
+  mongo_data:
   qdrant_storage:

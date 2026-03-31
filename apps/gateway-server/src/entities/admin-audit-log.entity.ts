@@ -52,9 +52,10 @@ export class AdminAuditLog {
   @Column({ type: 'varchar', length: 1000 })
   reason!: string;
 
-  /** Snapshot of the changes made (JSON stringified before/after) */
-  @Column({ type: 'varchar', nullable: true })
-  changeSnapshot!: string | null;
+  /**
+   * changeSnapshot is now stored in MongoDB
+   * to avoid JSON bloating in PostgreSQL.
+   */
 
   @CreateDateColumn({ type: 'timestamptz' })
   timestamp!: Date;

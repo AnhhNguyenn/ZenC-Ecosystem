@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     PG_PASSWORD: str = ""
     PG_DATABASE: str = "zenc_ai"
 
+    MONGO_URI: str = ""
+
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     REDIS_PASSWORD: str = ""

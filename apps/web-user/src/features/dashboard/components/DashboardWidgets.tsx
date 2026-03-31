@@ -93,7 +93,12 @@ export function LearningProgress({ isLoading, data }: { isLoading: boolean; data
   const isNewUser = !data?.totalXp && !data?.lessonsCompleted;
 
   if (isNewUser) {
-    return <DashboardEmptyState />;
+    return (
+      <EmptyState
+        title="Welcome to your learning journey!"
+        description="Complete your first lesson to see your progress here."
+      />
+    );
   }
 
   return (

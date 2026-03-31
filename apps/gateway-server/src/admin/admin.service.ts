@@ -8,10 +8,13 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
+import { InjectModel } from '@nestjs/mongoose';
 import { MoreThan, Repository } from 'typeorm';
+import { Model } from 'mongoose';
 import { User } from '../entities/user.entity';
 import { Session } from '../entities/session.entity';
 import { AdminAuditLog } from '../entities/admin-audit-log.entity';
+import { AdminAuditLogDoc, AdminAuditLogDocument } from './schemas/admin-audit-log.schema';
 import { RedisService } from '../common/redis.service';
 import { GrantDto } from './admin.dto';
 
@@ -26,6 +29,8 @@ export class AdminService {
     private readonly sessionRepo: Repository<Session>,
     @InjectRepository(AdminAuditLog)
     private readonly auditRepo: Repository<AdminAuditLog>,
+    @InjectModel(AdminAuditLogDocument.name)
+    private readonly auditLogModel: Model<AdminAuditLogDoc>,
     private readonly redis: RedisService,
     private readonly config: ConfigService,
   ) {}
@@ -83,9 +88,18 @@ export class AdminService {
         targetUserId,
         action: actions.join('; '),
         reason: dto.reason,
-        changeSnapshot: JSON.stringify({ before: beforeState, after: afterState }),
       });
-      await this.auditRepo.save(auditLog);
+      const savedAuditLog = await this.auditRepo.save(auditLog);
+
+      await this.auditLogModel.create({
+        auditLogId: savedAuditLog.id,
+        adminId,
+        targetUserId,
+        action: actions.join('; '),
+        reason: dto.reason,
+        changeSnapshot: { before: beforeState, after: afterState },
+      });
+
       await this.redis.invalidateUserCache(targetUserId);
 
       this.logger.log(
@@ -105,12 +119,24 @@ export class AdminService {
     }
   }
 
-  async getAuditLogs(targetUserId: string): Promise<AdminAuditLog[]> {
+  async getAuditLogs(targetUserId: string): Promise<any[]> {
     try {
-      return await this.auditRepo.find({
+      const logs = await this.auditRepo.find({
         where: { targetUserId },
         order: { timestamp: 'DESC' },
         take: 100,
+      });
+
+      const logIds = logs.map(l => l.id);
+      const docs = await this.auditLogModel.find({ auditLogId: { $in: logIds } });
+      const docMap = new Map(docs.map(d => [d.auditLogId, d]));
+
+      return logs.map(log => {
+        const doc = docMap.get(log.id);
+        return {
+          ...log,
+          changeSnapshot: doc ? JSON.stringify(doc.changeSnapshot) : null,
+        };
       });
     } catch (error) {
       this.logger.error(`Failed to fetch audit logs: ${(error as Error).message}`);

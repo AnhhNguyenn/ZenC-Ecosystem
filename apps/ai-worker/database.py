@@ -11,6 +11,7 @@ from typing import Any
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker, DeclarativeBase
+from motor.motor_asyncio import AsyncIOMotorClient
 from config import settings
 
 
@@ -44,6 +45,10 @@ SessionLocal = sessionmaker(
     bind=engine,
     expire_on_commit=False,
 )
+
+# MongoDB client
+mongo_client = AsyncIOMotorClient(settings.MONGO_URI)
+mongo_db = mongo_client.get_default_database()
 
 
 class Base(DeclarativeBase):

@@ -70,7 +70,7 @@ Be encouraging but honest. Score generously for beginners."""
 
 
 async def assess_pronunciation(
-    audio_base64: str,
+    audio_url: str,
     reference_text: str,
     user_id: str,
 ) -> dict:
@@ -78,7 +78,7 @@ async def assess_pronunciation(
     Assess pronunciation of audio against reference text using Gemini.
 
     Args:
-        audio_base64: Base64-encoded audio (PCM 16-bit 16kHz mono)
+        audio_url: URL to the audio file in object storage
         reference_text: The text the user was supposed to read
         user_id: For tracking and caching problem patterns
 
@@ -91,9 +91,23 @@ async def assess_pronunciation(
 
         prompt = PRONUNCIATION_PROMPT.format(reference_text=reference_text)
 
-        # Use Azure Pronunciation Assessment API if configured
         import base64
         import aiohttp
+
+        # Download the audio file from the provided URL
+        async with aiohttp.ClientSession() as session:
+            async with session.get(audio_url) as resp:
+                if resp.status != 200:
+                    logger.error(f"Failed to fetch audio from {audio_url}: HTTP {resp.status}")
+                    return {
+                        "status": "ERROR",
+                        "error": "Failed to download audio file",
+                    }
+                audio_bytes = await resp.read()
+
+        audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+
+        # Use Azure Pronunciation Assessment API if configured
         azure_key = settings.AZURE_SPEECH_KEY
         azure_region = settings.AZURE_SPEECH_REGION
 
@@ -110,8 +124,6 @@ async def assess_pronunciation(
                     "Dimension": "Comprehensive"
                 }).encode('utf-8')).decode('utf-8')
             }
-            audio_bytes = base64.b64decode(audio_base64)
-
             # The API expects WAV header or raw PCM depending on exact config,
             # but usually it handles raw PCM 16kHz 16-bit mono well.
             async with aiohttp.ClientSession() as session:

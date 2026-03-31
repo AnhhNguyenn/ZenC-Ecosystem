@@ -46,9 +46,11 @@ async function bootstrap(): Promise<void> {
   const redisHost = configService.get<string>('REDIS_HOST', 'localhost');
   const redisPort = configService.get<string>('REDIS_PORT', '6379');
   const redisPassword = configService.get<string>('REDIS_PASSWORD', '');
+  const redisTls = configService.get<string>('REDIS_TLS') === 'true';
+  const redisScheme = redisTls ? 'rediss://' : 'redis://';
   const redisUrl = redisPassword
-    ? `redis://:${encodeURIComponent(redisPassword)}@${redisHost}:${redisPort}`
-    : `redis://${redisHost}:${redisPort}`;
+    ? `${redisScheme}:${encodeURIComponent(redisPassword)}@${redisHost}:${redisPort}`
+    : `${redisScheme}${redisHost}:${redisPort}`;
   await redisIoAdapter.connectToRedis(redisUrl);
   app.useWebSocketAdapter(redisIoAdapter);
 

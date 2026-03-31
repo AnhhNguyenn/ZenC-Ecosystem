@@ -80,11 +80,19 @@ import { SocialModule } from './social/social.module';
           migrations: ['dist/migrations/*.js'],
           migrationsRun: config.get<string>('NODE_ENV') === 'production',
           logging: config.get<string>('NODE_ENV') === 'development',
+          poolErrorHandler: (err: Error) => {
+            console.error('TypeORM Pool Error:', err);
+          },
+          pool: {
+            prepared_statement: false,
+          },
           extra: {
             max: poolMax,
             connectionTimeoutMillis: 30000,
-            statement_timeout: 30000,
+            statement_timeout: 10000,
+            query_timeout: 10000,
           },
+          useUTC: true,
         };
 
         // CQRS: Use replication if replica is configured

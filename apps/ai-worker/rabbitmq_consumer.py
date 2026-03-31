@@ -80,8 +80,25 @@ class RabbitMQConsumer:
                     await message.ack()
                 except Exception as e:
                     logger.error(f"Error processing {queue_name} task: {e}")
-                    # Negative Acknowledge triggers Dead Letter Queue (requeue=False prevents infinite loop)
-                    await message.nack(requeue=False)
+
+                    # Handle Retry mechanism
+                    # Check the number of times it has been delivered
+                    headers = message.headers or {}
+                    x_death = headers.get("x-death")
+                    retry_count = 0
+                    if x_death:
+                        for death in x_death:
+                            if death.get("queue") == queue_name:
+                                retry_count = death.get("count", 0)
+                                break
+
+                    if not getattr(message, 'redelivered', False) and retry_count < 3:
+                         logger.info(f"Requeueing message for {queue_name} (Retry {retry_count + 1}/3)")
+                         await message.nack(requeue=True)
+                    else:
+                         logger.error(f"Message for {queue_name} failed after {retry_count} retries. Moving to DLQ.")
+                         # Negative Acknowledge triggers Dead Letter Queue (requeue=False prevents infinite loop)
+                         await message.nack(requeue=False)
 
     async def _handle_deep_brain(self, raw_data: str):
         # Delegate down to exactly the same logic currently in pubsub_listener.py

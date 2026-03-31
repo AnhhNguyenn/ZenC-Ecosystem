@@ -17,6 +17,11 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
         queue: 'deep_brain_tasks',
         queueOptions: {
           durable: true,
+          arguments: {
+            'x-dead-letter-exchange': 'deep_brain_tasks_dlx',
+            'x-dead-letter-routing-key': 'deep_brain_tasks',
+            'x-message-ttl': 60000,
+          },
         },
       },
     });

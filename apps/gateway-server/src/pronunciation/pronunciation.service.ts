@@ -23,11 +23,11 @@ export class PronunciationService {
 
   /**
    * Request pronunciation assessment.
-   * Audio is base64-encoded in the payload (kept in RAM, never on disk).
+   * Audio is uploaded to object storage and its URL is passed in the payload.
    */
   async requestAssessment(
     userId: string,
-    audioBase64: string,
+    audioUrl: string,
     referenceText: string,
     exerciseId?: string,
   ): Promise<{ assessmentId: string; status: string }> {
@@ -36,7 +36,7 @@ export class PronunciationService {
     const payload = JSON.stringify({
       assessmentId,
       userId,
-      audioBase64,
+      audioUrl,
       referenceText,
       exerciseId: exerciseId || null,
       timestamp: new Date().toISOString(),

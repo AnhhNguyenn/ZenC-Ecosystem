@@ -22,7 +22,9 @@ export class RedisService implements OnModuleDestroy {
   public readonly publisher: Redis;
 
   constructor(private readonly config: ConfigService) {
-    const redisConfig = {
+    const tlsEnabled = this.config.get<string>('REDIS_TLS') === 'true';
+
+    const redisConfig: any = {
       host: this.config.get<string>('REDIS_HOST', 'localhost'),
       port: this.config.get<number>('REDIS_PORT', 6379),
       password: this.config.get<string>('REDIS_PASSWORD'),
@@ -35,22 +37,30 @@ export class RedisService implements OnModuleDestroy {
       maxRetriesPerRequest: 3,
     };
 
+    if (tlsEnabled) {
+      redisConfig.tls = {};
+    }
+
     // FIX Bom 6: Separate cluster for PubSub to prevent OOM Eviction killing socket connections.
     // If REDIS_PUBSUB_HOST is provided, use it. Otherwise fallback to main Redis.
     const pubSubHost = this.config.get<string>('REDIS_PUBSUB_HOST');
     const pubSubPortStr = this.config.get<string>('REDIS_PUBSUB_PORT');
     const pubSubPassword = this.config.get<string>('REDIS_PUBSUB_PASSWORD');
 
-    const redisPubSubConfig = {
+    const redisPubSubConfig: any = {
       ...redisConfig,
       host: pubSubHost || redisConfig.host,
       port: pubSubPortStr ? Number(pubSubPortStr) : redisConfig.port,
       password: pubSubPassword !== undefined ? pubSubPassword : redisConfig.password,
     };
 
-    this.client = new Redis(redisConfig as any);
-    this.subscriber = new Redis(redisPubSubConfig as any);
-    this.publisher = new Redis(redisPubSubConfig as any);
+    if (tlsEnabled) {
+      redisPubSubConfig.tls = {};
+    }
+
+    this.client = new Redis(redisConfig);
+    this.subscriber = new Redis(redisPubSubConfig);
+    this.publisher = new Redis(redisPubSubConfig);
 
     this.client.on('connect', () => this.logger.log('Redis client connected'));
     this.client.on('error', (err) => this.logger.error('Redis client error', err));

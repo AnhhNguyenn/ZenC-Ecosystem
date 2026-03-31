@@ -8,14 +8,16 @@ import {
   Request,
   Version,
 } from '@nestjs/common';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ThrottlerUserIpGuard } from '../common/throttler-user-ip.guard';
 import { PronunciationService } from './pronunciation.service';
 import { IsString, MaxLength, IsOptional } from 'class-validator';
 
 class AssessDto {
   @IsString()
-  @MaxLength(5000000) // ~3.75MB base64 limit
-  audioBase64!: string;
+  @MaxLength(2000)
+  audioUrl!: string;
 
   @IsString()
   @MaxLength(2000)
@@ -27,19 +29,20 @@ class AssessDto {
 }
 
 @Controller('pronunciation')
+@UseGuards(JwtAuthGuard, ThrottlerUserIpGuard)
 export class PronunciationController {
   constructor(private readonly pronunciationService: PronunciationService) {}
 
   @Post('assess')
   @Version('1')
-  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   async assess(
     @Body() dto: AssessDto,
     @Request() req: { user: { sub: string } },
   ) {
     return this.pronunciationService.requestAssessment(
       req.user.sub,
-      dto.audioBase64,
+      dto.audioUrl,
       dto.referenceText,
       dto.exerciseId,
     );

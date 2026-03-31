@@ -65,13 +65,23 @@ export default function VoicePracticePage() {
 
   const isActive = state !== 'idle';
 
-  const handleToggleSession = () => {
-    if (isActive) {
-      disconnect();
-      // Show reward screen immediately upon ending session
-      setShowReward(true);
-    } else {
-      connect(voiceSettings);
+  const [isPending, setIsPending] = useState(false);
+
+  const handleToggleSession = async () => {
+    if (isPending) return;
+    setIsPending(true);
+
+    try {
+      if (isActive) {
+        await disconnect();
+        // Show reward screen immediately upon ending session
+        setShowReward(true);
+      } else {
+        await connect(voiceSettings);
+      }
+    } finally {
+      // Small debounce before allowing another click
+      setTimeout(() => setIsPending(false), 500);
     }
   };
 
@@ -177,12 +187,13 @@ export default function VoicePracticePage() {
           size="lg"
           className={styles.actionBtn}
           onClick={handleToggleSession}
+          disabled={isPending}
           aria-label={isActive ? 'End conversation' : 'Start conversation'}
         >
           {isActive ? <PhoneOff size={24} /> : (
             <>
               <PhoneCall size={20} style={{ marginRight: '8px' }} />
-              Start Conversation
+              {isPending ? 'Connecting...' : 'Start Conversation'}
             </>
           )}
         </Button>

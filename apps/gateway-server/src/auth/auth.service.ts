@@ -223,12 +223,15 @@ export class AuthService {
         throw new UnauthorizedException('Account is locked');
       }
 
+      // Security: Multi-login kick-out. Increment auth version on new login to invalidate old tokens/sockets
+      const newVersion = await this.redis.getClient().incr(this.getTokenVersionKey(user.id));
+      await this.redis.removeActiveSession(user.id);
+
       const tokens = await this.generateTokens(user);
       await this.storeRefreshToken(user.id, tokens.refreshToken);
 
       // Persist auth version with no TTL (fail-close security)
-      const currentVersion = await this.getTokenVersion(user.id);
-      await this.redis.ensureAuthVersionPersistent(user.id, currentVersion);
+      await this.redis.ensureAuthVersionPersistent(user.id, newVersion);
 
       const profile = await this.profileRepo.findOne({ where: { userId: user.id } });
       if (profile) {

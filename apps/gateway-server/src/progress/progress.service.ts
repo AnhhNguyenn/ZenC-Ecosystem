@@ -383,14 +383,27 @@ export class ProgressService {
 
     if (totalXpEarned > 0) {
       const today = new Date().toISOString().split('T')[0];
+
+      // Atomic Update for DailyGoal to prevent race conditions
       await this.goalRepo
         .createQueryBuilder()
         .update(DailyGoal)
         .set({
-          xpEarned: () => `xpEarned + ${totalXpEarned}`,
-          exercisesCompleted: () => `exercisesCompleted + ${answers.length}`,
+          xpEarned: () => `"xpEarned" + ${totalXpEarned}`,
+          exercisesCompleted: () => `"exercisesCompleted" + ${answers.length}`,
         })
         .where('userId = :userId AND date = :today', { userId, today })
+        .execute();
+
+      // Atomic Update for User totalXp
+      const { User } = require('../entities');
+      await this.attemptRepo.manager
+        .createQueryBuilder()
+        .update(User)
+        .set({
+          totalXp: () => `"totalXp" + ${totalXpEarned}`,
+        })
+        .where('id = :userId', { userId })
         .execute();
 
       await this.redis.addLeaderboardXp(userId, totalXpEarned);

@@ -50,8 +50,25 @@ class RabbitMQConsumer:
     async def _consume_queue(self, queue_name: str, handler):
         if not self.channel: return
         
-        queue = await self.channel.declare_queue(queue_name, durable=True)
-        logger.info(f"Subscribed to RabbitMQ queue: {queue_name}")
+        # Declare Dead Letter Exchange and Queue
+        dlx_name = f"{queue_name}_dlx"
+        dlq_name = f"{queue_name}_dlq"
+        dlx = await self.channel.declare_exchange(dlx_name, aio_pika.ExchangeType.DIRECT, durable=True)
+        dlq = await self.channel.declare_queue(dlq_name, durable=True)
+        await dlq.bind(dlx, routing_key=queue_name)
+
+        # Declare main queue with TTL and DLX configuration
+        # x-message-ttl: 60000ms (60 seconds) - Prevents RAM bloat if worker is overwhelmed
+        queue = await self.channel.declare_queue(
+            queue_name,
+            durable=True,
+            arguments={
+                "x-dead-letter-exchange": dlx_name,
+                "x-dead-letter-routing-key": queue_name,
+                "x-message-ttl": 60000
+            }
+        )
+        logger.info(f"Subscribed to RabbitMQ queue: {queue_name} (with DLX and 60s TTL)")
 
         async with queue.iterator() as queue_iter:
             async for message in queue_iter:
@@ -63,8 +80,8 @@ class RabbitMQConsumer:
                     await message.ack()
                 except Exception as e:
                     logger.error(f"Error processing {queue_name} task: {e}")
-                    # Negative Acknowledge unconditionally triggers requeue or DLQ
-                    await message.nack(requeue=True)
+                    # Negative Acknowledge triggers Dead Letter Queue (requeue=False prevents infinite loop)
+                    await message.nack(requeue=False)
 
     async def _handle_deep_brain(self, raw_data: str):
         # Delegate down to exactly the same logic currently in pubsub_listener.py

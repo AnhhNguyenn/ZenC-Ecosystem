@@ -763,18 +763,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       const turns = (this.aiConsecutiveTurns.get(client.id) || 0) + 1;
       this.aiConsecutiveTurns.set(client.id, turns);
 
-      if (turns === 3) {
-        // If the AI has spoken 3 times without user response, prompt it to ask the user
-        const providerSessionId = this.providerSessionIds.get(client.id);
-        if (providerSessionId) {
-          const prompt = `System instruction: The user has been silent for a while. Briefly ask "Are you still there?" or "Should we continue?" and then STOP talking immediately.`;
-          if (provider === 'openai') {
-            this.openaiService.sendTextPrompt(providerSessionId, prompt);
-          } else {
-            this.geminiService.sendTextPrompt(providerSessionId, prompt);
-          }
-        }
-      } else if (turns >= 10) {
+      if (turns >= 10) {
         this.logger.warn(`[Security] Hallucination loop detected for ${client.id} (10+ consecutive AI turns). Disconnecting.`);
         client.emit('error', {
           message: 'Session closed due to inactivity or abnormal AI behavior.',

@@ -81,8 +81,42 @@ async def evaluate_conversation(
             "highlights": result.get("highlights", [])[:5],
             "improvements": result.get("improvements", [])[:5],
             "vietnameseAdvice": result.get("vietnameseAdvice", ""),
+            "isNSFW": result.get("isNSFW", False),
+            "toxicityScore": _clamp(result.get("toxicityScore", 0)),
+            "toxicityReason": result.get("toxicityReason", ""),
             "status": "COMPLETED",
         }
+
+        # Phase 4 / Context 4: Audio Moderation / Toxicity Flagging
+        if scores["isNSFW"] or scores["toxicityScore"] > 70:
+            logger.warning(f"[Moderation] Toxic conversation detected for user {user_id}. Score: {scores['toxicityScore']}. Reason: {scores['toxicityReason']}")
+
+            # Insert alert into DB
+            try:
+                async with async_session_factory() as db_session:
+                    from sqlalchemy import text
+                    import uuid
+                    await db_session.execute(
+                        text("""
+                            INSERT INTO admin_audit_logs (id, "adminId", action, "targetType", "targetId", details)
+                            VALUES (:id, :admin_id, :action, :target_type, :target_id, :details)
+                        """),
+                        {
+                            "id": str(uuid.uuid4()),
+                            "admin_id": "system_auto_moderation",
+                            "action": "FLAG_TOXIC_USER",
+                            "target_type": "USER",
+                            "target_id": user_id,
+                            "details": json.dumps({
+                                "toxicityScore": scores["toxicityScore"],
+                                "reason": scores["toxicityReason"],
+                                "transcript_snippet": transcript[-500:] if transcript else ""
+                            })
+                        }
+                    )
+                    await db_session.commit()
+            except Exception as audit_err:
+                logger.error(f"Failed to insert audit log for toxic user {user_id}: {audit_err}")
 
         # Calculate weighted overall score
         scores["overall"] = round(
@@ -152,6 +186,9 @@ Also provide:
 - **highlights**: Array of 3-5 specific things the student did WELL (with examples from transcript)
 - **improvements**: Array of 3-5 specific areas to improve (with corrected examples)
 - **vietnameseAdvice**: A paragraph of advice IN VIETNAMESE for the student, encouraging and actionable
+- **isNSFW**: Boolean (true if the transcript contains hate speech, profanity, sexually explicit content, or dangerous political rhetoric)
+- **toxicityScore**: A number from 0-100 indicating the severity of toxicity (0 = perfectly safe, 100 = extremely toxic)
+- **toxicityReason**: If isNSFW is true, briefly explain why in 1 sentence. Otherwise, empty string.
 
 Respond in JSON format:
 {{
@@ -161,7 +198,10 @@ Respond in JSON format:
   "coherence": number,
   "highlights": ["string"],
   "improvements": ["string"],
-  "vietnameseAdvice": "string"
+  "vietnameseAdvice": "string",
+  "isNSFW": boolean,
+  "toxicityScore": number,
+  "toxicityReason": "string"
 }}"""
 
 

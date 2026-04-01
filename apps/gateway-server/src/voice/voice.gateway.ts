@@ -106,6 +106,12 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     { text: string; count: number }
   >();
 
+  /**
+   * Phase 4 / Context 3: Hallucination & Idle Loop Protection
+   * Tracks consecutive AI turns without any human voice input.
+   */
+  private readonly aiConsecutiveTurns = new Map<string, number>();
+
   /** WebSocket Slowloris Prevention */
   private readonly absoluteTimeouts = new Map<string, NodeJS.Timeout>();
   private readonly idleTimeouts = new Map<string, NodeJS.Timeout>();
@@ -402,6 +408,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       this.socketModes.set(client.id, 'FREE_TALK');
       this.sessionStartTimes.set(client.id, Date.now());
       this.correctionEnabled.set(client.id, true);
+      this.aiConsecutiveTurns.set(client.id, 0);
 
       // ── WEBSOCKET SLOWLORIS SHIELD ──────────────────────────────
       await this.resetTimeouts(client);
@@ -570,6 +577,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     });
 
     emitter.on('userTranscript', async (text: string) => {
+      // Phase 4 / Context 3: Reset consecutive AI turn tracker when user speaks
+      this.aiConsecutiveTurns.set(client.id, 0);
+
       // ── ANTI-BOT FARMING (Replay Attack Shield) ──
       const normalizedText = text.trim().toLowerCase();
       if (normalizedText.length > 5) {
@@ -708,6 +718,19 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
 
     emitter.on('turnComplete', () => {
       client.emit('turn_complete');
+
+      // Phase 4 / Context 3: Tracking consecutive AI turns to prevent hallucination infinite loops
+      const turns = (this.aiConsecutiveTurns.get(client.id) || 0) + 1;
+      this.aiConsecutiveTurns.set(client.id, turns);
+
+      if (turns >= 30) {
+        this.logger.warn(`[Security] Hallucination loop detected for ${client.id} (30+ consecutive AI turns). Disconnecting.`);
+        client.emit('error', {
+          message: 'Session closed due to inactivity or abnormal AI behavior.',
+          code: 'HALLUCINATION_LOOP_DETECTED'
+        });
+        client.disconnect(true);
+      }
     });
 
     emitter.on('fallbackToText', () => {
@@ -1659,6 +1682,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     this.correctionEnabled.delete(client.id);
     this.socketAudioEventCounts.delete(client.id);
     this.socketLastTranscripts.delete(client.id);
+    this.aiConsecutiveTurns.delete(client.id);
 
     // 6. Remove active session from Redis (Prevent Race Condition)
     if (userId) {

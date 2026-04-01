@@ -56,28 +56,37 @@ export class AuthService {
     this.saltRounds = this.config.get<number>('BCRYPT_SALT_ROUNDS', 12);
   }
 
-  async register(dto: RegisterDto, deviceId?: string, ipAddress?: string): Promise<{ userId: string; email: string }> {
+  async register(dto: RegisterDto, deviceId?: string, ipAddress?: string): Promise<{ message: string; userId?: string; email: string }> {
     // Anti-Fraud check: limit registration/OTP per IP/Device
     await this.checkRateLimit(`register_otp`, ipAddress || 'unknown_ip', deviceId);
 
     const email = this.normalizeEmail(dto.email);
-    // Hash password outside of the database transaction
-    const passwordHash = await bcrypt.hash(
-      this.prehashPassword(dto.password),
-      this.saltRounds,
-    );
 
     try {
+      // Avoid hashing passwords for existing emails to prevent CPU exhaustion DoS
+      // and enumeration attacks. First, check if user exists.
+      const existingUser = await this.userRepo.findOne({ where: { email } });
+
+      if (existingUser) {
+        // Fallback fake hash delay to prevent timing attacks, then return a generic success message
+        await bcrypt.hash('fake-delay-password', 10);
+        return { message: 'If this email is not registered, an account will be created and an OTP sent.', email };
+      }
+
+      // Hash password outside of the database transaction ONLY if email is new
+      const passwordHash = await bcrypt.hash(
+        this.prehashPassword(dto.password),
+        this.saltRounds,
+      );
+
       const savedUser = await this.dataSource.transaction(async (manager) => {
         const transactionalUserRepo = manager.getRepository(User);
         const profileRepo = manager.getRepository(UserProfile);
 
-        const existingUser = await transactionalUserRepo.findOne({
-          where: { email },
-        });
-
-        if (existingUser) {
-          throw new ConflictException('Email already registered');
+        // Double check within transaction
+        const doubleCheckUser = await transactionalUserRepo.findOne({ where: { email } });
+        if (doubleCheckUser) {
+           throw new ConflictException('Email already registered');
         }
 
         // Default to UNVERIFIED and 0 tokens. Bonus is applied upon OTP verification.
@@ -121,10 +130,11 @@ export class AuthService {
       await this.sendEmailOtp(typedUser.email, otp, 'register');
 
       this.logger.log(`User registered (UNVERIFIED): ${typedUser.email}`);
-      return { userId: typedUser.id, email: typedUser.email };
+      return { message: 'If this email is not registered, an account will be created and an OTP sent.', userId: typedUser.id, email: typedUser.email };
     } catch (error) {
       if (error instanceof ConflictException || this.isDuplicateKeyError(error)) {
-        throw new ConflictException('Email already registered');
+        // Mask the error to prevent enumeration
+        return { message: 'If this email is not registered, an account will be created and an OTP sent.', email };
       }
 
       this.logger.error(
@@ -390,15 +400,24 @@ export class AuthService {
   // ═══════════════════════════════════════════════════════════════
 
   private async checkRateLimit(action: string, ip: string, deviceId?: string, maxLimit = 3): Promise<void> {
-    const identifier = deviceId || ip;
-    const rateKey = `rate_limit:${action}:${identifier}`;
-
-    const count = await this.redis.getClient().incr(rateKey);
-    if (count === 1) {
-      await this.redis.getClient().expire(rateKey, 15 * 60); // 15 phút
+    if (deviceId && deviceId !== 'unknown') {
+      const deviceKey = `rate_limit:${action}:device:${deviceId}`;
+      const deviceCount = await this.redis.getClient().incr(deviceKey);
+      if (deviceCount === 1) {
+        await this.redis.getClient().expire(deviceKey, 15 * 60);
+      }
+      if (deviceCount > maxLimit) {
+        throw new UnauthorizedException('Quá nhiều yêu cầu từ thiết bị này. Vui lòng thử lại sau 15 phút.');
+      }
     }
 
-    if (count > maxLimit) {
+    const ipKey = `rate_limit:${action}:ip:${ip}`;
+    const ipCount = await this.redis.getClient().incr(ipKey);
+    if (ipCount === 1) {
+      await this.redis.getClient().expire(ipKey, 15 * 60);
+    }
+
+    if (ipCount > maxLimit) {
       throw new UnauthorizedException('Quá nhiều yêu cầu. Vui lòng thử lại sau 15 phút.');
     }
   }

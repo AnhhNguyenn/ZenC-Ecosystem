@@ -111,13 +111,15 @@ describe('AuthService', () => {
   describe('register', () => {
     const registerDto = { email: 'test@zenc.ai', password: 'StrongPass1!' };
 
-    it('should throw ConflictException if email already exists', async () => {
-      txUserRepo.findOne.mockResolvedValue({ id: '1', email: registerDto.email });
+    it('should return a generic success message if email already exists to prevent enumeration', async () => {
+      mockUserRepo.findOne.mockResolvedValue({ id: '1', email: registerDto.email });
 
-      await expect(service.register(registerDto)).rejects.toThrow(ConflictException);
+      const result = await service.register(registerDto);
+      expect(result).toEqual({ email: registerDto.email, message: 'If this email is not registered, an account will be created and an OTP sent.' });
     });
 
     it('should register a new user and return userId and email', async () => {
+      mockUserRepo.findOne.mockResolvedValue(null);
       txUserRepo.findOne.mockResolvedValue(null);
       txUserRepo.create.mockImplementation((value) => value);
       txUserRepo.save.mockResolvedValue({

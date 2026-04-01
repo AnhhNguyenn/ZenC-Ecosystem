@@ -763,8 +763,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       const turns = (this.aiConsecutiveTurns.get(client.id) || 0) + 1;
       this.aiConsecutiveTurns.set(client.id, turns);
 
-      if (turns >= 30) {
-        this.logger.warn(`[Security] Hallucination loop detected for ${client.id} (30+ consecutive AI turns). Disconnecting.`);
+      if (turns >= 10) {
+        this.logger.warn(`[Security] Hallucination loop detected for ${client.id} (10+ consecutive AI turns). Disconnecting.`);
         client.emit('error', {
           message: 'Session closed due to inactivity or abnormal AI behavior.',
           code: 'HALLUCINATION_LOOP_DETECTED'

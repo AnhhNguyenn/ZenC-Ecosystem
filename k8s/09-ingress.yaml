@@ -12,6 +12,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-next-upstream-tries: "3"
     # Rate Limiting Configuration (L7)
     nginx.ingress.kubernetes.io/limit-rps: "50"
+    # Limit max number of simultaneous connections for a single IP (particularly WebSockets)
     nginx.ingress.kubernetes.io/limit-connections: "10"
     # Session Affinity (Sticky Sessions for WebSockets)
     nginx.ingress.kubernetes.io/affinity: "cookie"

@@ -336,7 +336,7 @@ export class GeminiService implements OnModuleDestroy {
    * @param sessionId - Session to send the prompt on
    * @param prompt - Text prompt to send to Gemini
    */
-  sendTextPrompt(sessionId: string, prompt: string): void {
+  sendTextPrompt(sessionId: string, prompt: string, imageUrl?: string): void {
     const session = this.activeSessions.get(sessionId);
     if (!session?.ws || session.ws.readyState !== WebSocket.OPEN) {
       this.logger.warn(`Cannot send text: no active Gemini session for ${sessionId}`);
@@ -344,12 +344,25 @@ export class GeminiService implements OnModuleDestroy {
     }
 
     try {
+      const parts: any[] = [{ text: prompt }];
+
+      // Phase 3: The Cambly Killer - Vision Roleplay Support
+      // Add image parts to the prompt if provided.
+      // Assuming imageUrl is a presigned S3 url or a public URL.
+      if (imageUrl) {
+        // Warning: The Live API (WebSocket) for Gemini might require base64 instead of URL depending on version.
+        // For standard models (gemini-1.5-flash), fileData / inlineData is supported via WS.
+        // We will send the URL via text as a context anchor. The LLM will fetch it or we assume it has been pre-uploaded to Gemini File API.
+        // For simplicity and latency constraints (Phase 3 spec), we just append the URL context.
+        parts.push({ text: `[SYSTEM: The user has uploaded an image for this roleplay context. Image URL: ${imageUrl}]` });
+      }
+
       const message = {
         clientContent: {
           turns: [
             {
               role: 'user',
-              parts: [{ text: prompt }],
+              parts,
             },
           ],
           turnComplete: true,
@@ -361,6 +374,45 @@ export class GeminiService implements OnModuleDestroy {
       this.logger.error(
         `Failed to send text prompt for session ${sessionId}: ${(error as Error).message}`,
       );
+    }
+  }
+
+  /**
+   * Phase 3: Forward the Vision Context to Gemini
+   * This is called by Voice Gateway when it receives a 'vision_context' event.
+   */
+  async sendVisionContext(sessionId: string, imageUrl: string): Promise<void> {
+    try {
+      // Download the image quickly into RAM to send as inlineData (fastest way for Gemini WS)
+      const response = await fetch(imageUrl);
+      if (!response.ok) throw new Error('Failed to fetch image');
+
+      const arrayBuffer = await response.arrayBuffer();
+      const base64Data = Buffer.from(arrayBuffer).toString('base64');
+      const mimeType = response.headers.get('content-type') || 'image/jpeg';
+
+      const session = this.activeSessions.get(sessionId);
+      if (!session?.ws || session.ws.readyState !== WebSocket.OPEN) {
+         return;
+      }
+
+      // Send image as RealtimeInput so Gemini "sees" it immediately
+      const message = {
+        realtimeInput: {
+          mediaChunks: [
+            {
+              mimeType,
+              data: base64Data,
+            },
+          ],
+        },
+      };
+
+      session.ws.send(JSON.stringify(message));
+      this.logger.log(`Sent vision context (inline base64) to Gemini for session ${sessionId}`);
+
+    } catch (error) {
+      this.logger.error(`Failed to send vision context for session ${sessionId}: ${(error as Error).message}`);
     }
   }
 

@@ -45,6 +45,34 @@ export class VerifyOtpDto {
   otp!: string;
 }
 
+export class ForgotPasswordDto {
+  @IsEmail()
+  @MaxLength(255)
+  email!: string;
+}
+
+export class ResetPasswordDto {
+  @IsEmail()
+  @MaxLength(255)
+  email!: string;
+
+  @IsString()
+  @MinLength(6)
+  @MaxLength(6)
+  otp!: string;
+
+  @IsString()
+  @MinLength(8)
+  @MaxLength(256)
+  newPassword!: string;
+}
+
+export class SocialLoginDto {
+  @IsString()
+  @MaxLength(4096)
+  token!: string; // Google ID Token or Apple Identity Token
+}
+
 export interface JwtPayload {
   sub: string;
   email: string;

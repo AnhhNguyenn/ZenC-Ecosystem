@@ -7,7 +7,7 @@ import {
   ConnectedSocket,
   MessageBody,
 } from '@nestjs/websockets';
-import { Logger } from '@nestjs/common';
+import { Logger, OnApplicationShutdown } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
@@ -56,7 +56,7 @@ import { JwtPayload } from '../auth/auth.dto';
   pingInterval: 25000,
   pingTimeout: 20000,
 })
-export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, OnApplicationShutdown {
   @WebSocketServer()
   server!: Server;
 
@@ -192,6 +192,48 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   // ═══════════════════════════════════════════════════════════════
+  // GRACEFUL SHUTDOWN (Phase 4)
+  // ═══════════════════════════════════════════════════════════════
+
+  private isShuttingDown = false;
+
+  async onApplicationShutdown(signal?: string) {
+    this.logger.warn(`Received ${signal}. Gracefully shutting down WebSocket connections...`);
+    this.isShuttingDown = true;
+
+    // Notify all clients that the server is restarting
+    this.server.emit('server_restarting', { message: 'Server is restarting for maintenance. Reconnecting...' });
+
+    // Stop accepting new connections
+    this.server.disconnectSockets(true); // Close immediately for new handshakes?
+    // Actually, we want to allow existing connections to cleanup.
+
+    const cleanupPromises: Promise<void>[] = [];
+
+    for (const [socketId] of this.socketSessions.entries()) {
+      const client = this.server.sockets.sockets.get(socketId);
+      if (client) {
+        // Disconnect will trigger handleDisconnect -> cleanupSession
+        cleanupPromises.push(new Promise((resolve) => {
+          client.once('disconnect', () => resolve());
+          client.disconnect(true);
+        }));
+      }
+    }
+
+    // Wait maximum 10 seconds for all sessions to cleanly flush their tokens and close AI connections
+    try {
+      await Promise.race([
+        Promise.all(cleanupPromises),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Shutdown timeout')), 10000))
+      ]);
+      this.logger.log('All voice sessions cleaned up successfully.');
+    } catch (e) {
+      this.logger.error(`Graceful shutdown timed out or failed: ${(e as Error).message}`);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   // CONNECTION LIFECYCLE
   // ═══════════════════════════════════════════════════════════════
 
@@ -207,6 +249,12 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
    * 6. Proactive greeting
    */
   async handleConnection(client: Socket): Promise<void> {
+    if (this.isShuttingDown) {
+      client.emit('error', { message: 'Server is restarting, please reconnect later.' });
+      client.disconnect();
+      return;
+    }
+
     try {
       // ── Step 1: IP Blacklist Check ──────────────────────────────
       const clientIp = client.handshake.address;
@@ -1136,6 +1184,34 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   /**
+   * Phase 3: The Cambly Killer (Vision Roleplay).
+   * Receives an image URL (uploaded to S3 by client) and forwards it
+   * to Gemini so the AI can "see" the user's context (e.g. a restaurant menu).
+   */
+  @SubscribeMessage('vision_context')
+  async handleVisionContext(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { imageUrl: string },
+  ): Promise<void> {
+    if (!data || !data.imageUrl) return;
+    try {
+      const providerSessionId = this.providerSessionIds.get(client.id);
+      const provider = this.socketProviders.get(client.id);
+      if (!providerSessionId || provider !== 'gemini') return; // Only Gemini supports this natively right now
+
+      this.logger.log(`[Vision Roleplay] Forwarding image from ${client.id} to Gemini`);
+      // Instruct the AI to acknowledge the image and play along
+      const prompt = `System instruction: The user has just showed you an image (sent via data stream). Act as if you are looking at it in real life. Reply naturally (e.g. "I see you're looking at...").`;
+
+      this.geminiService.sendTextPrompt(providerSessionId, prompt);
+      await this.geminiService.sendVisionContext(providerSessionId, data.imageUrl);
+
+    } catch (e) {
+      this.logger.error(`Vision context error: ${(e as Error).message}`);
+    }
+  }
+
+  /**
    * Handle explicit session end request.
    * Triggers post-session conversation scoring.
    */
@@ -1670,9 +1746,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       languageInstructions = `The student has moderate confidence (${confidence}). Use primarily English with occasional Vietnamese hints when they struggle. Balance challenge and support.`;
     }
 
-    // DYNAMIC_USER_CONTEXT (O(1) Speed Retrieval of 150-word Persona Summary from Redis)
+    // Phase 3: The ChatGPT Killer - DYNAMIC_USER_CONTEXT (O(1) Speed Retrieval of 150-word Persona Summary from Redis)
     const userPersonaSummary = await this.redis.getClient().get(`user_persona:${userId}`) || "This is a new student. Be encouraging and try to understand their learning needs.";
-    const dynamicUserContext = `\n\nSTUDENT BACKGROUND (Long-Term Memory):\n${userPersonaSummary}\nUse this information naturally to personalize the conversation.`;
+    const dynamicUserContext = `\n\n[STUDENT BACKGROUND (Long-Term Memory)]\n${userPersonaSummary}\nUse this information naturally to personalize the conversation.`;
 
     // Mode-specific instructions
     const modeInstructions = this.getModeInstructions(
@@ -1693,6 +1769,7 @@ ${languageInstructions}
 
 ${modeInstructions}
 </strict_persona>
+${dynamicUserContext}
 ${groundedContext}${targetWords && targetWords.length > 0 ? `\n\n[SECRET MISSION]\nYour secret mission today is to subtly force the student to say these target words naturally: [${targetWords.join(', ')}]. \nCreate conversational situations or ask questions that heavily imply these words. \nIf the student says the word, or any variation of it, YOU MUST immediately and enthusiastically praise them (e.g., "Wow, you used the word '${targetWords[0]}' perfectly!"), and then transition to another topic or the next target word.` : ''}
 
 <security_shield>

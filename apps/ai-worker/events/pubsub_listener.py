@@ -505,6 +505,18 @@ Do NOT include any conversational preamble. Only output valid JSON."""
                 except Exception as ex:
                     logger.error(f"Failed to store facts in Qdrant: {ex}")
 
+            # Fallback to store core facts into Redis List for the Gateway to fetch instantly
+            if core_facts:
+                try:
+                    # Push each fact into a Redis list (keeping top 10)
+                    fact_key = f"user_core_facts:{user_id}"
+                    for fact in core_facts:
+                        await self._redis.lpush(fact_key, str(fact))
+                    await self._redis.ltrim(fact_key, 0, 9) # Keep 10 most recent facts
+                    await self._redis.expire(fact_key, 604800) # 7 days
+                except Exception as r_err:
+                    logger.error(f"Failed to save core facts to Redis: {r_err}")
+
             # 5. Save the rolling summary back to Redis for immediate context
             if new_summary:
                 await self._redis.set(f"user_persona:{user_id}", new_summary, ex=604800) # 7 days

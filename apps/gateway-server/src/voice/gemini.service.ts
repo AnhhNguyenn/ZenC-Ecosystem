@@ -336,7 +336,7 @@ export class GeminiService implements OnModuleDestroy {
    * @param sessionId - Session to send the prompt on
    * @param prompt - Text prompt to send to Gemini
    */
-  sendTextPrompt(sessionId: string, prompt: string, imageUrl?: string): void {
+  sendTextPrompt(sessionId: string, prompt: string): void {
     const session = this.activeSessions.get(sessionId);
     if (!session?.ws || session.ws.readyState !== WebSocket.OPEN) {
       this.logger.warn(`Cannot send text: no active Gemini session for ${sessionId}`);
@@ -344,25 +344,12 @@ export class GeminiService implements OnModuleDestroy {
     }
 
     try {
-      const parts: any[] = [{ text: prompt }];
-
-      // Phase 3: The Cambly Killer - Vision Roleplay Support
-      // Add image parts to the prompt if provided.
-      // Assuming imageUrl is a presigned S3 url or a public URL.
-      if (imageUrl) {
-        // Warning: The Live API (WebSocket) for Gemini might require base64 instead of URL depending on version.
-        // For standard models (gemini-1.5-flash), fileData / inlineData is supported via WS.
-        // We will send the URL via text as a context anchor. The LLM will fetch it or we assume it has been pre-uploaded to Gemini File API.
-        // For simplicity and latency constraints (Phase 3 spec), we just append the URL context.
-        parts.push({ text: `[SYSTEM: The user has uploaded an image for this roleplay context. Image URL: ${imageUrl}]` });
-      }
-
       const message = {
         clientContent: {
           turns: [
             {
               role: 'user',
-              parts,
+              parts: [{ text: prompt }],
             },
           ],
           turnComplete: true,
@@ -382,12 +369,21 @@ export class GeminiService implements OnModuleDestroy {
    * This is called by Voice Gateway when it receives a 'vision_context' event.
    */
   async sendVisionContext(sessionId: string, imageUrl: string): Promise<void> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000); // 5-second timeout to prevent memory leak/event loop block
+
     try {
-      // Download the image quickly into RAM to send as inlineData (fastest way for Gemini WS)
-      const response = await fetch(imageUrl);
+      // Download the image quickly into RAM to send as inlineData
+      // Expected size is < 300KB (Client-side optimized) to avoid node.js sync blocking with Buffer.from()
+      const response = await fetch(imageUrl, { signal: controller.signal });
+      clearTimeout(timeout);
+
       if (!response.ok) throw new Error('Failed to fetch image');
 
       const arrayBuffer = await response.arrayBuffer();
+
+      // Node.js warning: Buffer.from().toString() is sync. For massive concurrency, this shouldn't exceed 300KB
+      // If files become large, we might need a Worker Thread, but for small thumbnails, it's safe.
       const base64Data = Buffer.from(arrayBuffer).toString('base64');
       const mimeType = response.headers.get('content-type') || 'image/jpeg';
 
@@ -412,6 +408,7 @@ export class GeminiService implements OnModuleDestroy {
       this.logger.log(`Sent vision context (inline base64) to Gemini for session ${sessionId}`);
 
     } catch (error) {
+      clearTimeout(timeout);
       this.logger.error(`Failed to send vision context for session ${sessionId}: ${(error as Error).message}`);
     }
   }

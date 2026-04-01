@@ -1200,8 +1200,10 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       if (!providerSessionId || provider !== 'gemini') return; // Only Gemini supports this natively right now
 
       this.logger.log(`[Vision Roleplay] Forwarding image from ${client.id} to Gemini`);
-      // Instruct the AI to acknowledge the image and play along
-      const prompt = `System instruction: The user has just showed you an image (sent via data stream). Act as if you are looking at it in real life. Reply naturally (e.g. "I see you're looking at...").`;
+
+      // Instruct the AI to acknowledge the image and play along.
+      // We explicitly state that the image was sent via the multimodal stream to avoid confusing the model with URLs in text.
+      const prompt = `[SYSTEM: User vừa gửi một bức ảnh qua luồng Multimodal. Hãy phản hồi về bức ảnh đó.]`;
 
       this.geminiService.sendTextPrompt(providerSessionId, prompt);
       await this.geminiService.sendVisionContext(providerSessionId, data.imageUrl);
@@ -1748,7 +1750,14 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
 
     // Phase 3: The ChatGPT Killer - DYNAMIC_USER_CONTEXT (O(1) Speed Retrieval of 150-word Persona Summary from Redis)
     const userPersonaSummary = await this.redis.getClient().get(`user_persona:${userId}`) || "This is a new student. Be encouraging and try to understand their learning needs.";
-    const dynamicUserContext = `\n\n[STUDENT BACKGROUND (Long-Term Memory)]\n${userPersonaSummary}\nUse this information naturally to personalize the conversation.`;
+
+    // Fetch Top 5 Core Facts from Redis (extracted by background worker)
+    const coreFactsList = await this.redis.getClient().lrange(`user_core_facts:${userId}`, 0, 4);
+    const coreFactsStr = coreFactsList.length > 0
+      ? `\nCore Facts:\n${coreFactsList.map(f => `- ${f}`).join('\n')}`
+      : '';
+
+    const dynamicUserContext = `\n\n[STUDENT BACKGROUND (Long-Term Memory)]\n${userPersonaSummary}${coreFactsStr}\nUse this information naturally to personalize the conversation.`;
 
     // Mode-specific instructions
     const modeInstructions = this.getModeInstructions(

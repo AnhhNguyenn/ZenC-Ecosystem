@@ -54,29 +54,25 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         throw new UnauthorizedException('Invalid token payload');
       }
 
+      // 1. Check Specific Revoke (JTI Blacklist) from Redis
+      if (payload.jti) {
+        const isBlacklisted = await this.redis.getClient().exists(`jwt_blacklist:${payload.jti}`);
+        if (isBlacklisted) {
+          throw new UnauthorizedException('Token has been blacklisted');
+        }
+      }
+
+      // 2. Check Global Revoke (Token Versioning) from Redis
       const rawVersion = await this.redis.get(`auth_version:${payload.sub}`);
       const currentVersion = Number.parseInt(rawVersion ?? '0', 10);
       if (currentVersion !== (payload.tokenVersion ?? 0)) {
         throw new UnauthorizedException('Token has been revoked');
       }
 
-      const user = await this.userRepo.findOne({
-        where: { id: payload.sub, isDeleted: false },
-      });
-      if (!user) {
-        throw new UnauthorizedException('User not found');
-      }
-
-      if (user.status !== 'ACTIVE') {
-        throw new UnauthorizedException('Account is not active');
-      }
-
-      return {
-        ...payload,
-        email: user.email,
-        tier: user.tier,
-        status: user.status,
-      };
+      // We removed the database query (userRepo.findOne) here to prevent performance bottlenecks.
+      // Redis auth_version covers the case of user bans (admin should increment auth_version when banning).
+      // The payload contains the necessary information for downstream guards.
+      return payload;
     } catch (error) {
       this.logger.warn(`JWT validation failed: ${(error as Error).message}`);
       throw new UnauthorizedException('Token validation failed');

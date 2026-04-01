@@ -561,7 +561,23 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         // Redact PII (e.g., Credit Card Numbers) from User audio before storing as cleartext log
         const redacted = this.redactPII(text);
         const isMinor = client.data?.user?.isMinor || false;
-        this.redis.appendTranscriptLine(sid, 'user', redacted, isMinor).catch(e => this.logger.error(e));
+        await this.redis.appendTranscriptLine(sid, 'user', redacted, isMinor).catch(e => this.logger.error(e));
+
+        // ── PHASE 8: Context Window Overflow Prevention ──
+        // Trigger background summarization every 15 messages to keep AI context window small.
+        if (!isMinor) {
+          const len = await this.redis.getTranscriptLength(sid);
+          if (len > 0 && len % 15 === 0) {
+            const userId = this.socketUsers.get(client.id);
+            if (userId) {
+              this.rabbitmq.dispatchDeepBrainTask('summarize_long_term_memory', {
+                sessionId: sid,
+                userId,
+                messageCount: len
+              }).catch(e => this.logger.error(`Failed to queue summarization task: ${e.message}`));
+            }
+          }
+        }
       }
 
       // ── COGNITIVE ROUTING (Handover to Deep Brain) ──

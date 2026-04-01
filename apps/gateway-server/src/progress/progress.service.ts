@@ -330,6 +330,21 @@ export class ProgressService {
       return { xpEarned: 0 };
     }
 
+    // Phase 2: Idempotency Key against Race Conditions & Spam
+    // A single user cannot submit the same lesson progress concurrently
+    const idempotencyKey = `submit_lesson:${userId}:${lessonId}`;
+    const acquired = await this.redis.getClient().setnx(idempotencyKey, '1');
+    if (acquired === 0) {
+      this.logger.warn(`Idempotency rejected: User ${userId} is submitting lesson ${lessonId} concurrently.`);
+      // Return fake success to confuse spam tool
+      return { xpEarned: 0 };
+    }
+
+    // Set expiration for idempotency lock
+    await this.redis.getClient().expire(idempotencyKey, 3600); // Lock for 1 hour to prevent sequential spam
+
+    try {
+
     const exerciseIds = answers.map((a) => a.exerciseId);
     const exercises = await this.exerciseRepo.find({
       where: { id: In(exerciseIds) }
@@ -412,6 +427,13 @@ export class ProgressService {
     this.logger.log(`User ${userId} earned ${totalXpEarned} XP for lesson ${lessonId}`);
 
     return { xpEarned: totalXpEarned };
+    } catch (e) {
+      // Only delete the idempotency lock if an actual error occurred,
+      // allowing the user to legitimately retry the submission.
+      // On success, the lock remains for 3600s to prevent double submissions.
+      await this.redis.getClient().del(idempotencyKey);
+      throw e;
+    }
   }
 
   private _calculateLevel(totalXp: number): number {

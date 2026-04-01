@@ -25,6 +25,7 @@ Vietnamese-specific concerns:
 
 import json
 import logging
+import gc
 from typing import Optional
 
 import google.generativeai as genai
@@ -85,6 +86,11 @@ async def assess_pronunciation(
     Returns:
         Assessment result dict with scores and feedback
     """
+
+    # Pre-declare large objects to ensure they exist in finally block
+    audio_bytes = None
+    audio_base64 = None
+
     try:
         genai.configure(api_key=settings.GEMINI_API_KEY)
         model = genai.GenerativeModel("gemini-2.5-flash")
@@ -166,6 +172,15 @@ async def assess_pronunciation(
                         logger.error(f"Azure API returned {resp.status}: {await resp.text()}")
                         # Fallback to Gemini below
 
+        # For future reference: if switching to local ML models (e.g. Whisper C++ or FFmpeg)
+        # that require a physical file path instead of raw bytes, use ManagedTempFile:
+        #
+        # from utils.file_manager import ManagedTempFile
+        # with ManagedTempFile(audio_bytes, suffix=".wav") as tmp_path:
+        #     local_model.transcribe(tmp_path)
+        #
+        # The file will be automatically deleted on block exit.
+
         # Send audio + prompt to Gemini for multimodal analysis as fallback
         response = await await_with_timeout(
             model.generate_content_async(
@@ -205,6 +220,14 @@ async def assess_pronunciation(
             "status": "ERROR",
             "error": str(e),
         }
+    finally:
+        # Critical memory cleanup to prevent OOM Killer
+        # Large strings and bytes in async environments can hang around and kill pods
+        if audio_bytes is not None:
+            del audio_bytes
+        if audio_base64 is not None:
+            del audio_base64
+        gc.collect()
 
 
 async def update_problem_sounds(

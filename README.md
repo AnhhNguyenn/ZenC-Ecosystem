@@ -94,5 +94,7 @@ Hệ thống quản lý hàng chục nghìn kết nối realtime và tính toán
 
 > 💣 Hệ thống vừa được gỡ bỏ 12 "Quả bom nổ chậm" liên quan đến kiến trúc (Tham khảo lịch sử Commit). Mọi PR mới phải tuân thủ nghiêm ngặt chuẩn định tuyến, Error handling bằng Queue (RabbitMQ DLX) và Caching phân tách (Pub/Sub vs Cache).
 
+> 💎 **Hệ thống hiện tại đã cập nhật Kiến trúc V2 (Go-Live Ready):** Bao gồm tích hợp **Social Login SSO**, chống **Prompt Injection**, **WebSocket DoS**, dọn dẹp **OOM/Temp File**, quản lý **Zombie Sessions**, phòng chống **Race Conditions** qua Idempotency Keys, **Denormalization Leaderboard** qua Redis, lưu trữ S3 **Presigned POST**, và **Sliding Window Summarization** cho LLM Context Window. Xem chi tiết tại `docs/ARCHITECTURE_V2_MIGRATION.md`.
+
 ---
 **Happy Coding! Chúc bạn xây dựng ZenC Ecosystem thành công rực rỡ!** 🚀

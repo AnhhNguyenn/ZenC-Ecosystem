@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AdminController } from './admin.controller';
+import { ConfigController } from './config.controller';
 import { AdminService } from './admin.service';
 import { AdminGuard } from './admin.guard';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -20,7 +21,7 @@ import { AdminAuditLogDocument, AdminAuditLogSchema } from './schemas/admin-audi
     TypeOrmModule.forFeature([User, Session, AdminAuditLog]),
     MongooseModule.forFeature([{ name: AdminAuditLogDocument.name, schema: AdminAuditLogSchema }]),
   ],
-  controllers: [AdminController],
+  controllers: [AdminController, ConfigController],
   providers: [AdminService, AdminGuard],
 })
 export class AdminModule {}

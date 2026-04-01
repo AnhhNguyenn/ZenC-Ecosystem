@@ -30,6 +30,9 @@ import { GdprModule } from './gdpr/gdpr.module';
 import { ConversationModule } from './conversation/conversation.module';
 import { PronunciationDrillModule } from './pronunciation/pronunciation-drill.module';
 import { SocialModule } from './social/social.module';
+import { PaymentsModule } from './payments/payments.module';
+import { StorageModule } from './storage/storage.module';
+import { ProfileModule } from './profile/profile.module';
 
 /**
  * AppModule – Root module composing all feature modules.
@@ -216,6 +219,11 @@ import { SocialModule } from './social/social.module';
 
     // ── Compliance ────────────────────────────────────────────
     GdprModule,
+
+    // ── Subscriptions & Files ─────────────────────────────────
+    PaymentsModule,
+    StorageModule,
+    ProfileModule,
   ],
 })
 export class AppModule {}

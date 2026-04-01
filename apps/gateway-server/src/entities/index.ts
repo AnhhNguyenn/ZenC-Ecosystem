@@ -22,6 +22,8 @@ export { Streak } from './streak.entity';
 export { DailyGoal } from './daily-goal.entity';
 export { Notification } from './notification.entity';
 export { Conversation } from './conversation.entity';
+export { Subscription } from './subscription.entity';
+export { TransactionHistory } from './transaction-history.entity';
 
 import { User } from './user.entity';
 import { UserProfile } from './user-profile.entity';
@@ -41,6 +43,8 @@ import { Streak } from './streak.entity';
 import { DailyGoal } from './daily-goal.entity';
 import { Notification } from './notification.entity';
 import { Conversation } from './conversation.entity';
+import { Subscription } from './subscription.entity';
+import { TransactionHistory } from './transaction-history.entity';
 
 /** Explicit entity array for TypeOrmModule configuration */
 export const AllEntities = [
@@ -62,4 +66,6 @@ export const AllEntities = [
   DailyGoal,
   Notification,
   Conversation,
+  Subscription,
+  TransactionHistory,
 ];

@@ -14,7 +14,8 @@ import { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
-import { JwtPayload, LoginDto, RefreshTokenDto, RegisterDto, VerifyOtpDto } from './auth.dto';
+import { JwtPayload, LoginDto, RefreshTokenDto, RegisterDto, VerifyOtpDto, ForgotPasswordDto, ResetPasswordDto, SocialLoginDto } from './auth.dto';
+import { Headers, Ip } from '@nestjs/common';
 
 @Controller('auth')
 export class AuthController {
@@ -27,8 +28,10 @@ export class AuthController {
   @HttpCode(HttpStatus.CREATED)
   async register(
     @Body() dto: RegisterDto,
+    @Headers('x-device-id') deviceId?: string,
+    @Ip() ipAddress?: string,
   ) {
-    const result = await this.authService.register(dto);
+    const result = await this.authService.register(dto, deviceId, ipAddress);
 
     return {
       statusCode: HttpStatus.CREATED,
@@ -42,8 +45,10 @@ export class AuthController {
   async verifyOtp(
     @Body() dto: VerifyOtpDto,
     @Res({ passthrough: true }) response: Response,
+    @Headers('x-device-id') deviceId?: string,
+    @Ip() ipAddress?: string,
   ) {
-    const result = await this.authService.verifyOtp(dto);
+    const result = await this.authService.verifyOtp(dto, deviceId, ipAddress);
     this.setRefreshTokenCookie(response, result.refreshToken);
 
     return {
@@ -65,6 +70,62 @@ export class AuthController {
     return {
       statusCode: HttpStatus.OK,
       message: 'Login successful',
+      data: result,
+    };
+  }
+
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  async forgotPassword(
+    @Body() dto: ForgotPasswordDto,
+    @Headers('x-device-id') deviceId?: string,
+    @Ip() ipAddress?: string,
+  ) {
+    await this.authService.forgotPassword(dto, deviceId, ipAddress);
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'If the email exists, an OTP has been sent.',
+    };
+  }
+
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(
+    @Body() dto: ResetPasswordDto,
+  ) {
+    await this.authService.resetPassword(dto);
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'Password has been successfully reset.',
+    };
+  }
+
+  @Post('social/google')
+  @HttpCode(HttpStatus.OK)
+  async googleLogin(
+    @Body() dto: SocialLoginDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.authService.socialLogin(dto, 'google');
+    this.setRefreshTokenCookie(response, result.refreshToken);
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'Google login successful',
+      data: result,
+    };
+  }
+
+  @Post('social/apple')
+  @HttpCode(HttpStatus.OK)
+  async appleLogin(
+    @Body() dto: SocialLoginDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.authService.socialLogin(dto, 'apple');
+    this.setRefreshTokenCookie(response, result.refreshToken);
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'Apple login successful',
       data: result,
     };
   }

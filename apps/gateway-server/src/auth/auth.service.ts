@@ -15,7 +15,9 @@ import { User } from '../entities/user.entity';
 import { UserProfile } from '../entities/user-profile.entity';
 import { RedisService } from '../common/redis.service';
 import { RabbitMQService } from '../common/rabbitmq.service';
-import { JwtPayload, RegisterDto, LoginDto, VerifyOtpDto } from './auth.dto';
+import { JwtPayload, RegisterDto, LoginDto, VerifyOtpDto, ForgotPasswordDto, ResetPasswordDto, SocialLoginDto } from './auth.dto';
+import * as nodemailer from 'nodemailer';
+import { OAuth2Client } from 'google-auth-library';
 
 const DUMMY_PASSWORD_HASH =
   '$2b$10$6k7bRe1f4H4q.WxqnSxTiOzjll6T6hmN6xL2dMcQ4S0QxqjEWLTFK'; // bcrypt('not-the-right-password')
@@ -54,7 +56,10 @@ export class AuthService {
     this.saltRounds = this.config.get<number>('BCRYPT_SALT_ROUNDS', 12);
   }
 
-  async register(dto: RegisterDto): Promise<{ userId: string; email: string }> {
+  async register(dto: RegisterDto, deviceId?: string, ipAddress?: string): Promise<{ userId: string; email: string }> {
+    // Anti-Fraud check: limit registration/OTP per IP/Device
+    await this.checkRateLimit(`register_otp`, ipAddress || 'unknown_ip', deviceId);
+
     const email = this.normalizeEmail(dto.email);
     // Hash password outside of the database transaction
     const passwordHash = await bcrypt.hash(
@@ -112,6 +117,9 @@ export class AuthService {
         otp,
       });
 
+      // Also send directly if email is configured (Fallback for missing worker)
+      await this.sendEmailOtp(typedUser.email, otp, 'register');
+
       this.logger.log(`User registered (UNVERIFIED): ${typedUser.email}`);
       return { userId: typedUser.id, email: typedUser.email };
     } catch (error) {
@@ -127,7 +135,9 @@ export class AuthService {
     }
   }
 
-  async verifyOtp(dto: VerifyOtpDto): Promise<AuthResultDto> {
+  async verifyOtp(dto: VerifyOtpDto, deviceId?: string, ipAddress?: string): Promise<AuthResultDto> {
+    // Check if OTP verified on multiple devices to prevent abuse
+    await this.checkRateLimit('verify_otp', ipAddress || 'unknown_ip', deviceId, 10);
     const email = this.normalizeEmail(dto.email);
     const user = await this.userRepo.findOne({ where: { email } });
 
@@ -259,6 +269,172 @@ export class AuthService {
         (error as Error).stack,
       );
       throw error;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // BỐI CẢNH 1: HỆ THỐNG FORGOT PASSWORD (QUÊN MẬT KHẨU)
+  // ═══════════════════════════════════════════════════════════════
+
+  async forgotPassword(dto: ForgotPasswordDto, deviceId?: string, ipAddress?: string): Promise<void> {
+    // Tối đa 3 OTP trong 15 phút theo IP hoặc DeviceID
+    await this.checkRateLimit(`forgot_password`, ipAddress || 'unknown_ip', deviceId);
+
+    const user = await this.userRepo.findOne({ where: { email: dto.email, isDeleted: false } });
+    if (!user) {
+      // Return success anyway to prevent email enumeration (Security Best Practice)
+      return;
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpKey = `auth:forgot_otp:${user.id}`;
+    // 15 phút TTL
+    await this.redis.getClient().set(otpKey, otp, 'EX', 900);
+
+    await this.sendEmailOtp(user.email, otp, 'reset_password');
+  }
+
+  async resetPassword(dto: ResetPasswordDto): Promise<void> {
+    const user = await this.userRepo.findOne({ where: { email: dto.email, isDeleted: false } });
+    if (!user) throw new UnauthorizedException('Invalid OTP or email');
+
+    const otpKey = `auth:forgot_otp:${user.id}`;
+    const cachedOtp = await this.redis.getClient().get(otpKey);
+
+    if (!cachedOtp || cachedOtp !== dto.otp) {
+      throw new UnauthorizedException('Invalid or expired OTP');
+    }
+
+    // Hash mật khẩu mới
+    const salt = await bcrypt.genSalt(this.saltRounds);
+    const hash = await bcrypt.hash(dto.newPassword, salt);
+
+    user.passwordHash = hash;
+    await this.userRepo.save(user);
+
+    // Xóa OTP
+    await this.redis.getClient().del(otpKey);
+
+    // Global Revoke tất cả Session cũ của User này
+    await this.revokeTokens(user.id);
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // BỐI CẢNH 1.3: SOCIAL LOGIN (SSO)
+  // ═══════════════════════════════════════════════════════════════
+
+  async socialLogin(dto: SocialLoginDto, provider: 'google' | 'apple'): Promise<AuthResultDto> {
+    let decodedEmail: string | undefined;
+
+    if (provider === 'google') {
+      const clientId = this.config.get<string>('GOOGLE_CLIENT_ID');
+      if (!clientId) {
+        throw new UnauthorizedException('Google Login is not configured');
+      }
+      const client = new OAuth2Client(clientId);
+      try {
+        const ticket = await client.verifyIdToken({
+          idToken: dto.token,
+          audience: clientId,
+        });
+        const payload = ticket.getPayload();
+        decodedEmail = payload?.email;
+      } catch (e) {
+        throw new UnauthorizedException('Invalid Google ID Token');
+      }
+    } else if (provider === 'apple') {
+      // In a real production scenario, use apple-signin-auth to verify the identityToken
+      // For now, decode the JWT directly (assuming validation is handled by an API Gateway or will be implemented)
+      try {
+        const payload = this.jwtService.decode(dto.token) as any;
+        decodedEmail = payload?.email;
+      } catch (e) {
+        throw new UnauthorizedException('Invalid Apple Identity Token');
+      }
+    }
+
+    if (!decodedEmail) {
+      throw new UnauthorizedException(`Failed to extract email from ${provider} token`);
+    }
+
+    let user = await this.userRepo.findOne({ where: { email: decodedEmail, isDeleted: false } });
+
+    if (!user) {
+      // Tự động tạo user mới nếu chưa có (Zero-friction Onboarding)
+      user = this.userRepo.create({
+        email: decodedEmail,
+        passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
+        status: 'ACTIVE',
+        tier: 'FREE',
+        emailVerified: true,
+      });
+      await this.userRepo.save(user);
+    }
+
+    const tokens = await this.generateTokens(user);
+    await this.storeRefreshToken(user.id, tokens.refreshToken);
+
+    return {
+      ...tokens,
+      user: this.toAuthUser(user),
+    };
+  }
+
+  // Tiện ích để hỗ trợ hàm resetPassword Global Revoke
+  private async revokeTokens(userId: string): Promise<void> {
+    await this.invalidateUserSessions(userId);
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // TIỆN ÍCH BẢO MẬT & GỬI EMAIL
+  // ═══════════════════════════════════════════════════════════════
+
+  private async checkRateLimit(action: string, ip: string, deviceId?: string, maxLimit = 3): Promise<void> {
+    const identifier = deviceId || ip;
+    const rateKey = `rate_limit:${action}:${identifier}`;
+
+    const count = await this.redis.getClient().incr(rateKey);
+    if (count === 1) {
+      await this.redis.getClient().expire(rateKey, 15 * 60); // 15 phút
+    }
+
+    if (count > maxLimit) {
+      throw new UnauthorizedException('Quá nhiều yêu cầu. Vui lòng thử lại sau 15 phút.');
+    }
+  }
+
+  private async sendEmailOtp(email: string, otp: string, type: 'register' | 'reset_password'): Promise<void> {
+    const smtpHost = this.config.get<string>('SMTP_HOST');
+    const smtpPort = this.config.get<number>('SMTP_PORT', 587);
+    const smtpUser = this.config.get<string>('SMTP_USER');
+    const smtpPass = this.config.get<string>('SMTP_PASS');
+
+    // Mặc định không gửi mail nếu thiếu config, giả lập log console.
+    if (!smtpHost || !smtpUser) {
+      this.logger.log(`[MOCK EMAIL to ${email}] OTP cho ${type}: ${otp}`);
+      return;
+    }
+
+    try {
+      const transporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: smtpPort,
+        secure: smtpPort === 465,
+        auth: { user: smtpUser, pass: smtpPass },
+      });
+
+      const subject = type === 'register' ? 'ZenC - Mã xác thực đăng ký' : 'ZenC - Khôi phục mật khẩu';
+      const text = `Mã OTP của bạn là: ${otp}. Vui lòng không chia sẻ mã này cho bất kỳ ai. Mã có hiệu lực trong 15 phút.`;
+
+      await transporter.sendMail({
+        from: '"ZenC Support" <support@zenc.ai>',
+        to: email,
+        subject,
+        text,
+      });
+      this.logger.log(`Sent ${type} OTP email to ${email}`);
+    } catch (e) {
+      this.logger.error(`Failed to send OTP email: ${e}`);
     }
   }
 

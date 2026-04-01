@@ -1232,6 +1232,75 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   }
 
   /**
+   * "Panic Button": Force the AI to clear its short-term context and start fresh
+   * without dropping the WebSocket connection or affecting long-term memory.
+   */
+  @SubscribeMessage('refresh_conversation')
+  async handleRefreshConversation(
+    @ConnectedSocket() client: Socket
+  ): Promise<void> {
+    try {
+      const dbSessionId = this.socketSessions.get(client.id);
+      const providerSessionId = this.providerSessionIds.get(client.id);
+      const userId = this.socketUsers.get(client.id);
+      const provider = this.socketProviders.get(client.id);
+
+      if (!dbSessionId || !providerSessionId || !userId || !provider) return;
+
+      this.logger.log(`[UX] Refreshing conversation (Panic Button) for ${client.id}`);
+
+      // 1. Destroy old session completely
+      if (provider === 'gemini') {
+        this.geminiService.destroySession(providerSessionId);
+        this.geminiService.closeSession(providerSessionId);
+      } else {
+        this.openaiService.destroySession(providerSessionId);
+        this.openaiService.closeSession(providerSessionId);
+      }
+
+      const oldEmitter = this.socketEmitters.get(client.id);
+      if (oldEmitter) oldEmitter.removeAllListeners();
+
+      // 2. Clear Redis short term transcript for the *current* session only
+      // We will create a brand new providerSessionId to ensure no leftover context is bleeding
+      // NOTE: We do not clear `session_transcript:{dbSessionId}` because we want to
+      // keep the transcript for evaluation later. We simply omit injecting it as recent context.
+
+      const newProviderSessionId = `${dbSessionId}_refreshed_${Date.now()}`;
+
+      // 3. Rebuild system prompt from scratch
+      const profile = await this.redis.getCachedUserProfile(userId);
+      const mode = this.socketModes.get(client.id) || 'FREE_TALK';
+      const targetWords = await this.redis.getClient().lrange(`vocab_force:${userId}`, 0, 2);
+
+      const systemPrompt = await this.buildAdaptivePrompt(
+        userId,
+        profile || { currentLevel: 'A1', confidenceScore: '0.5', vnSupportEnabled: 'true', tier: 'FREE' },
+        mode,
+        undefined,
+        undefined,
+        undefined,
+        targetWords
+      );
+
+      // Add instruction to smoothly restart
+      const restartPrompt = systemPrompt + "\n\n[SYSTEM DIRECTIVE: The user requested a fresh start. Acknowledge this playfully and start a completely new topic or greet them fresh.]";
+
+      const newEmitter = this.createAISession(provider, newProviderSessionId, restartPrompt);
+
+      this.providerSessionIds.set(client.id, newProviderSessionId);
+      this.socketEmitters.set(client.id, newEmitter);
+      this.bindEmitterEvents(client, newEmitter, provider);
+      this.aiConsecutiveTurns.set(client.id, 0);
+
+      client.emit('conversation_refreshed', { message: 'Brain cleared! Starting fresh.' });
+
+    } catch (error) {
+      this.logger.error(`Failed to refresh conversation for ${client.id}: ${(error as Error).message}`);
+    }
+  }
+
+  /**
    * Toggle real-time grammar/pronunciation correction on/off.
    */
   @SubscribeMessage('request_correction')
@@ -1493,7 +1562,24 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     }
 
     const tokenVersion = this.socketTokenVersions.get(client.id) ?? 0;
-    const currentVersion = await this.getCurrentAuthVersion(userId);
+    let currentVersion = await this.getCurrentAuthVersion(userId);
+
+    // [Security Fallback] If Redis fails/returns 0 when we expect >0, double-check DB directly
+    if (currentVersion === 0 && tokenVersion > 0) {
+      try {
+        const dbUser = await this.userRepo.findOne({ where: { id: userId }, select: ['refreshTokenHash'] });
+        if (!dbUser || !dbUser.refreshTokenHash) {
+          // Hard invalidation - session logged out
+          currentVersion = -1;
+        } else {
+          // Assume DB is healthy and valid if we can't accurately get auth_version from Redis
+          currentVersion = tokenVersion;
+        }
+      } catch (dbError) {
+         this.logger.error(`Failed DB fallback auth check for user ${userId}`);
+      }
+    }
+
     if (currentVersion === tokenVersion) {
       return true;
     }

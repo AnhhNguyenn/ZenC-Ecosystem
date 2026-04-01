@@ -520,6 +520,14 @@ export class RedisService implements OnModuleDestroy {
     }
   }
 
+  async getTranscriptLength(sessionId: string): Promise<number> {
+    try {
+      return await this.client.llen(`transcript:${sessionId}`);
+    } catch {
+      return 0;
+    }
+  }
+
   /**
    * Retrieve the full transcript for a session.
    * Used during session reconnection to restore AI context.

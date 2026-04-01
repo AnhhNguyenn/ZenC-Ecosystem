@@ -377,6 +377,18 @@ class PubSubListener:
         logger.info("Received deep_brain_tasks event")
         try:
             payload = json.loads(raw_data)
+
+            # Check for specific task type (like summarization)
+            if payload.get("pattern") == "summarize_long_term_memory" or payload.get("taskType") == "summarize_long_term_memory":
+                user_id = payload.get("userId")
+                session_id = payload.get("sessionId")
+                if user_id and session_id:
+                    # Execute Background Summarization
+                    await self._summarize_conversation(user_id, session_id)
+                return
+
+            # Note: gateway sometimes sends `pattern` wrapped, but original payload is just stringified.
+            # Handle standard grammar explanation task
             session_id = payload.get("sessionId")
             question = payload.get("question")
             original_text = payload.get("originalText", "")
@@ -406,6 +418,82 @@ class PubSubListener:
 
         except Exception as e:
             logger.error(f"Error processing deep_brain_task: {e}", exc_info=True)
+
+    async def _summarize_conversation(self, user_id: str, session_id: str) -> None:
+        """
+        Background job to summarize the conversation transcript up to this point
+        and update the long-term memory (user persona) to prevent context window overflow.
+        """
+        if not self._redis:
+            return
+
+        try:
+            # 1. Fetch transcript from Redis
+            transcript_raw = await self._redis.lrange(f"transcript:{session_id}", 0, -1)
+            if not transcript_raw or len(transcript_raw) == 0:
+                return
+
+            # Parse entries
+            entries = []
+            for item in transcript_raw:
+                try:
+                    entries.append(json.loads(item))
+                except:
+                    pass
+
+            if len(entries) < 15:
+                return # Only summarize if it's getting long
+
+            # 2. Reconstruct chat string
+            chat_text = "\n".join([f"{e.get('role', 'unknown').capitalize()}: {e.get('text', '')}" for e in entries])
+
+            # 3. Fetch existing summary
+            existing_summary = await self._redis.get(f"user_persona:{user_id}")
+            existing_summary_text = existing_summary if existing_summary else "No previous context."
+
+            # 4. Generate new summary using Gemini 1.5 Flash
+            import google.generativeai as genai
+            from config import settings
+            from ai_timeout import await_with_timeout
+
+            genai.configure(api_key=settings.GEMINI_API_KEY)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+
+            prompt = f"""You are an AI tasked with maintaining a concise long-term memory summary of an English learning student.
+
+Previous Summary:
+{existing_summary_text}
+
+New Conversation Segment:
+{chat_text}
+
+Task: Update the summary to incorporate the new conversation. Keep it under 200 words. Focus on:
+- The student's name, interests, and current context
+- Key English mistakes they made
+- Topics discussed
+- Their overall tone and confidence
+Only output the new summary, without any conversational preamble."""
+
+            response = await await_with_timeout(
+                model.generate_content_async(
+                    prompt,
+                    generation_config=genai.GenerationConfig(
+                        temperature=0.2,
+                        max_output_tokens=300
+                    )
+                ),
+                "Background Summarization"
+            )
+
+            new_summary = response.text.strip()
+
+            # 5. Save back to Redis
+            if new_summary:
+                await self._redis.set(f"user_persona:{user_id}", new_summary, ex=604800) # 7 days
+                logger.info(f"Successfully summarized conversation for user {user_id}. Length: {len(entries)} turns.")
+
+        except Exception as e:
+            logger.error(f"Failed to summarize conversation for user {user_id}: {e}")
 
     async def stop(self) -> None:
         """

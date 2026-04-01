@@ -29,10 +29,33 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit() {
     try {
+      // Connect to RabbitMQ using nestjs-microservices
       await this.client.connect();
       this.logger.log('Successfully connected to RabbitMQ [deep_brain_tasks]');
+
+      // Phase 2.1: Assert DLX and DLQ directly using native amqplib since nestjs-microservices
+      // doesn't natively expose a simple way to create arbitrary exchanges and queues.
+      // Since `this.client` handles its own connection, we can instantiate a raw connection to ensure the DLX exists.
+      const amqp = require('amqplib');
+      const url = this.config.get<string>('RABBITMQ_URL', 'amqp://guest:guest@localhost:5672');
+      const conn = await amqp.connect(url);
+      const channel = await conn.createChannel();
+
+      // Deep Brain DLX setup
+      await channel.assertExchange('deep_brain_tasks_dlx', 'direct', { durable: true });
+      await channel.assertQueue('deep_brain_tasks_dlq', { durable: true });
+      await channel.bindQueue('deep_brain_tasks_dlq', 'deep_brain_tasks_dlx', 'deep_brain_tasks');
+
+      // Post Session Eval DLX setup
+      await channel.assertExchange('post_session_eval_dlx', 'direct', { durable: true });
+      await channel.assertQueue('post_session_eval_dlq', { durable: true });
+      await channel.bindQueue('post_session_eval_dlq', 'post_session_eval_dlx', 'post_session_eval');
+
+      await channel.close();
+      await conn.close();
+      this.logger.log('Successfully declared RabbitMQ Dead Letter Exchanges & Queues');
     } catch (e) {
-      this.logger.error(`RabbitMQ connection failed: ${e}`);
+      this.logger.error(`RabbitMQ setup failed: ${e}`);
     }
   }
 

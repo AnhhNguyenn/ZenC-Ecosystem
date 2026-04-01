@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, QueryFailedError, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 import { createHash } from 'crypto';
 import { User } from '../entities/user.entity';
 import { UserProfile } from '../entities/user-profile.entity';
@@ -324,11 +325,13 @@ export class AuthService {
     user: User,
   ): Promise<{ accessToken: string; refreshToken: string }> {
     const tokenVersion = await this.getTokenVersion(user.id);
+    const jti = crypto.randomUUID(); // Add JWT ID for specific revokes
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
       tier: user.tier,
       tokenVersion,
+      jti,
     };
 
     const [accessToken, refreshToken] = await Promise.all([

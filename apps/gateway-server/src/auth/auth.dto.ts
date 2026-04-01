@@ -51,4 +51,5 @@ export interface JwtPayload {
   tier: string;
   tokenVersion: number;
   status?: 'ACTIVE' | 'LOCKED' | 'BANNED';
+  jti?: string;
 }

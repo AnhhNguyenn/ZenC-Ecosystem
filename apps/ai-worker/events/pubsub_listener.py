@@ -387,6 +387,30 @@ class PubSubListener:
                     await self._summarize_conversation(user_id, session_id)
                 return
 
+            if payload.get("pattern") == "gdpr_delete_user_vectors" or payload.get("taskType") == "gdpr_delete_user_vectors":
+                user_id = payload.get("userId")
+                if user_id:
+                    from rag.rag_service import rag_service
+                    from qdrant_client.http import models
+                    try:
+                        rag_service.qdrant.delete(
+                            collection_name="long_term_memory",
+                            points_selector=models.FilterSelector(
+                                filter=models.Filter(
+                                    must=[
+                                        models.FieldCondition(
+                                            key="user_id",
+                                            match=models.MatchValue(value=user_id)
+                                        )
+                                    ]
+                                )
+                            )
+                        )
+                        logger.info(f"GDPR: Deleted Qdrant vectors for user {user_id}")
+                    except Exception as e:
+                        logger.error(f"GDPR: Failed to delete Qdrant vectors for user {user_id}: {e}")
+                return
+
             # Note: gateway sometimes sends `pattern` wrapped, but original payload is just stringified.
             # Handle standard grammar explanation task
             session_id = payload.get("sessionId")

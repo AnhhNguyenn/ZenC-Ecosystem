@@ -30,4 +30,41 @@ export class PaymentsController {
   ) {
     return this.paymentsService.restorePurchases(request.user.sub, dto.receiptData);
   }
+
+  @Post('webhooks/apple-s2s')
+  @HttpCode(HttpStatus.OK)
+  async appleWebhook(@Body() payload: any) {
+    // Basic implementation for Apple Server-to-Server notifications
+    // A real implementation would verify the App Store signature.
+    const notificationType = payload?.notificationType || payload?.notification_type;
+    if (notificationType === 'REFUND') {
+      const originalTransactionId = payload?.data?.signedTransactionInfo?.originalTransactionId || payload?.auto_renew_adam_id; // Structure varies by API v1/v2
+      if (originalTransactionId) {
+        await this.paymentsService.handleRefund(originalTransactionId);
+      }
+    }
+    return { received: true };
+  }
+
+  @Post('webhooks/google-rtdn')
+  @HttpCode(HttpStatus.OK)
+  async googleWebhook(@Body() payload: any) {
+    // Basic implementation for Google Real-time Developer Notifications
+    // The payload data is usually base64 encoded
+    try {
+      if (payload?.message?.data) {
+        const decodedData = JSON.parse(Buffer.from(payload.message.data, 'base64').toString('utf8'));
+        if (decodedData?.subscriptionNotification?.notificationType === 12) { // 12 = SUBSCRIPTION_REVOKED
+          const purchaseToken = decodedData.subscriptionNotification.purchaseToken;
+          // In Google, the purchaseToken often acts as the original transaction identifier or receipt
+          if (purchaseToken) {
+            await this.paymentsService.handleRefund(purchaseToken);
+          }
+        }
+      }
+    } catch (e) {
+      // Ignore parse errors, just return 200 to acknowledge
+    }
+    return { received: true };
+  }
 }

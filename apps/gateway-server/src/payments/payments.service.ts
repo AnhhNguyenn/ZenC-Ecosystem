@@ -90,6 +90,28 @@ export class PaymentsService {
   }
 
   /**
+   * Handle Webhook Refund
+   */
+  async handleRefund(originalTransactionId: string) {
+    return await this.subRepo.manager.transaction(async (manager) => {
+      const subscription = await manager.findOne(Subscription, { where: { originalTransactionId } });
+      if (!subscription) {
+        this.logger.warn(`Refund webhook received for unknown transaction: ${originalTransactionId}`);
+        return;
+      }
+
+      // Mark subscription as REFUNDED
+      subscription.status = 'REFUNDED';
+      await manager.save(subscription);
+
+      // Downgrade user tier
+      await manager.update(User, { id: subscription.userId }, { tier: 'FREE' });
+
+      this.logger.warn(`Processed refund for user ${subscription.userId}. Downgraded to FREE.`);
+    });
+  }
+
+  /**
    * Restore Purchases (Apple Guideline 3.1.1)
    * Users can tap "Restore" on a new device. The app sends the originalTransactionId (or latest receipt).
    */

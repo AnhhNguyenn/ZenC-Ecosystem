@@ -435,11 +435,18 @@ export class OpenAIRealtimeService implements OnModuleDestroy {
     if (session) {
       session.isAlive = false;
       if (session.ws && session.ws.readyState === WebSocket.OPEN) {
-        session.ws.close();
+        // Send a cancel/abort signal to stop any ongoing generation/billing (BOM 1)
+        try {
+          session.ws.send(JSON.stringify({ type: 'response.cancel' }));
+        } catch (e) {
+          // Ignore if already closing
+        }
+        // Forcefully close the websocket immediately to prevent zombie stream charges
+        session.ws.terminate();
       }
       session.emitter.removeAllListeners();
       this.activeSessions.delete(sessionId);
-      this.logger.log(`OpenAI Realtime session closed: ${sessionId}`);
+      this.logger.log(`OpenAI Realtime session forcefully closed/aborted: ${sessionId}`);
     }
   }
 

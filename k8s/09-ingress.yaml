@@ -14,9 +14,9 @@ metadata:
     nginx.ingress.kubernetes.io/limit-rps: "50"
     # Limit max number of simultaneous connections for a single IP (particularly WebSockets)
     nginx.ingress.kubernetes.io/limit-connections: "200"
-    # Session Affinity (Sticky Sessions for WebSockets)
+    # Session Affinity (Sticky Sessions for WebSockets - BOM 4)
     nginx.ingress.kubernetes.io/affinity: "cookie"
-    nginx.ingress.kubernetes.io/session-cookie-name: "zenc_route"
+    nginx.ingress.kubernetes.io/session-cookie-name: "zenc-ws-route"
     nginx.ingress.kubernetes.io/session-cookie-hash: "sha1"
 spec:
   tls:

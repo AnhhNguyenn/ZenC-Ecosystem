@@ -53,8 +53,8 @@ import { JwtPayload } from '../auth/auth.dto';
 @WebSocketGateway({
   namespace: '/voice',
   transports: ['websocket'],
-  pingInterval: 25000,
-  pingTimeout: 20000,
+  pingInterval: 10000, // Reduced to 10s for faster Zombie Socket detection (BOM 1)
+  pingTimeout: 5000,   // Reduced to 5s to quickly terminate connection (BOM 1)
 })
 export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, OnApplicationShutdown {
   @WebSocketServer()

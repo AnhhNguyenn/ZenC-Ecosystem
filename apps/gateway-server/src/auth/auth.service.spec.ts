@@ -118,25 +118,19 @@ describe('AuthService', () => {
       expect(result).toEqual({ email: registerDto.email, message: 'If this email is not registered, an account will be created and an OTP sent.' });
     });
 
-    it('should register a new user and return userId and email', async () => {
+    it('should initiate background registration and return generic success immediately', async () => {
       mockUserRepo.findOne.mockResolvedValue(null);
-      txUserRepo.findOne.mockResolvedValue(null);
-      txUserRepo.create.mockImplementation((value) => value);
-      txUserRepo.save.mockResolvedValue({
-        id: 'uuid-1',
-        email: 'test@zenc.ai',
-        tier: 'FREE',
-        status: 'UNVERIFIED',
-      });
-      txProfileRepo.create.mockImplementation((value) => value);
-      txProfileRepo.save.mockResolvedValue({});
+
+      // We spy on the private executeBackgroundRegistration method to ensure it's called
+      const executeBackgroundSpy = jest.spyOn(service as any, 'executeBackgroundRegistration').mockResolvedValue(undefined);
 
       const result = await service.register(registerDto);
 
       expect(result.email).toBe('test@zenc.ai');
-      expect(result.userId).toBe('uuid-1');
-      expect(txUserRepo.save).toHaveBeenCalled();
-      expect(txProfileRepo.save).toHaveBeenCalled();
+      expect(result.message).toBe('If this email is not registered, an account will be created and an OTP sent.');
+      expect(executeBackgroundSpy).toHaveBeenCalledWith(registerDto.email, expect.any(String));
+
+      executeBackgroundSpy.mockRestore();
     });
   });
 

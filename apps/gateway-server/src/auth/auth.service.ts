@@ -81,6 +81,24 @@ export class AuthService {
         this.saltRounds,
       );
 
+      // FIX: To prevent Timing Attacks via I/O Wait (DB + Email latency),
+      // we push the registration process into the background and return immediately.
+      this.executeBackgroundRegistration(email, passwordHash).catch((err) => {
+        this.logger.error(`Background registration failed for ${email}: ${err.message}`, err.stack);
+      });
+
+      return { message: 'If this email is not registered, an account will be created and an OTP sent.', email };
+    } catch (error) {
+      this.logger.error(
+        `Registration failed: ${(error as Error).message}`,
+        (error as Error).stack,
+      );
+      throw error;
+    }
+  }
+
+  private async executeBackgroundRegistration(email: string, passwordHash: string): Promise<void> {
+    try {
       const savedUser = await this.dataSource.transaction(async (manager) => {
         const transactionalUserRepo = manager.getRepository(User);
         const profileRepo = manager.getRepository(UserProfile);
@@ -132,17 +150,11 @@ export class AuthService {
       await this.sendEmailOtp(typedUser.email, otp, 'register');
 
       this.logger.log(`User registered (UNVERIFIED): ${typedUser.email}`);
-      return { message: 'If this email is not registered, an account will be created and an OTP sent.', userId: typedUser.id, email: typedUser.email };
     } catch (error) {
       if (error instanceof ConflictException || this.isDuplicateKeyError(error)) {
-        // Mask the error to prevent enumeration
-        return { message: 'If this email is not registered, an account will be created and an OTP sent.', email };
+        // Silently mask duplicate registration attempts in background worker
+        return;
       }
-
-      this.logger.error(
-        `Registration failed: ${(error as Error).message}`,
-        (error as Error).stack,
-      );
       throw error;
     }
   }

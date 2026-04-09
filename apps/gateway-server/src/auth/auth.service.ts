@@ -18,6 +18,8 @@ import { RabbitMQService } from '../common/rabbitmq.service';
 import { JwtPayload, RegisterDto, LoginDto, VerifyOtpDto, ForgotPasswordDto, ResetPasswordDto, SocialLoginDto } from './auth.dto';
 import * as nodemailer from 'nodemailer';
 import { OAuth2Client } from 'google-auth-library';
+import * as appleSignin from 'apple-signin-auth';
+import { HttpException, HttpStatus } from '@nestjs/common';
 
 const DUMMY_PASSWORD_HASH =
   '$2b$10$6k7bRe1f4H4q.WxqnSxTiOzjll6T6hmN6xL2dMcQ4S0QxqjEWLTFK'; // bcrypt('not-the-right-password')
@@ -69,7 +71,7 @@ export class AuthService {
 
       if (existingUser) {
         // Fallback fake hash delay to prevent timing attacks, then return a generic success message
-        await bcrypt.hash('fake-delay-password', 10);
+        await bcrypt.hash('fake-delay-password', this.saltRounds);
         return { message: 'If this email is not registered, an account will be created and an OTP sent.', email };
       }
 
@@ -113,7 +115,7 @@ export class AuthService {
       });
 
       // Generate 6-digit OTP
-      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      const otp = crypto.randomInt(100000, 1000000).toString();
       const typedUser = savedUser as User;
       const otpKey = `auth_otp:${typedUser.id}`;
       // Store in Redis with 5 minutes TTL
@@ -166,6 +168,12 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired OTP');
     }
 
+    // Attempt to delete OTP securely to prevent Race Condition
+    const deleted = await this.redis.getClient().del(otpKey);
+    if (deleted !== 1) {
+      throw new UnauthorizedException('Invalid or expired OTP');
+    }
+
     let authResult!: AuthResultDto;
 
     try {
@@ -181,9 +189,6 @@ export class AuthService {
           tokenBalance: () => `tokenBalance + ${welcomeBonus}`,
         });
       });
-
-      // Delete OTP OUTSIDE transaction
-      await this.redis.getClient().del(otpKey);
 
       // Reload user to get updated state for tokens
       const activeUser = await this.userRepo.findOneOrFail({ where: { id: user.id } });
@@ -296,7 +301,7 @@ export class AuthService {
       return;
     }
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = crypto.randomInt(100000, 1000000).toString();
     const otpKey = `auth:forgot_otp:${user.id}`;
     // 15 phút TTL
     await this.redis.getClient().set(otpKey, otp, 'EX', 900);
@@ -353,10 +358,11 @@ export class AuthService {
         throw new UnauthorizedException('Invalid Google ID Token');
       }
     } else if (provider === 'apple') {
-      // In a real production scenario, use apple-signin-auth to verify the identityToken
-      // For now, decode the JWT directly (assuming validation is handled by an API Gateway or will be implemented)
       try {
-        const payload = this.jwtService.decode(dto.token) as any;
+        const payload = await appleSignin.verifyIdToken(dto.token, {
+          audience: this.config.get<string>('APPLE_CLIENT_ID'), // Ensure this is configured
+          ignoreExpiration: false,
+        });
         decodedEmail = payload?.email;
       } catch (e) {
         throw new UnauthorizedException('Invalid Apple Identity Token');
@@ -407,7 +413,7 @@ export class AuthService {
         await this.redis.getClient().expire(deviceKey, 15 * 60);
       }
       if (deviceCount > maxLimit) {
-        throw new UnauthorizedException('Quá nhiều yêu cầu từ thiết bị này. Vui lòng thử lại sau 15 phút.');
+        throw new HttpException('Quá nhiều yêu cầu từ thiết bị này. Vui lòng thử lại sau 15 phút.', HttpStatus.TOO_MANY_REQUESTS);
       }
     }
 
@@ -418,7 +424,7 @@ export class AuthService {
     }
 
     if (ipCount > maxLimit) {
-      throw new UnauthorizedException('Quá nhiều yêu cầu. Vui lòng thử lại sau 15 phút.');
+      throw new HttpException('Quá nhiều yêu cầu. Vui lòng thử lại sau 15 phút.', HttpStatus.TOO_MANY_REQUESTS);
     }
   }
 

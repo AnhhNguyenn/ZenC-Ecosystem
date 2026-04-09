@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Subscription } from '../entities/subscription.entity';
 import { TransactionHistory } from '../entities/transaction-history.entity';
 import { User } from '../entities/user.entity';
+import { RedisService } from '../common/redis.service';
 
 @Injectable()
 export class PaymentsService {
@@ -13,10 +14,12 @@ export class PaymentsService {
     @InjectRepository(Subscription) private subRepo: Repository<Subscription>,
     @InjectRepository(TransactionHistory) private transRepo: Repository<TransactionHistory>,
     @InjectRepository(User) private userRepo: Repository<User>,
+    private readonly redis: RedisService,
   ) {}
 
   /**
    * Verify IAP Receipt from Mobile (Apple/Google) and grant/renew premium plan.
+   * BOM 2 Fix: Implemented distributed lock to prevent Webhook Double Spend Race Conditions.
    */
   async verifyReceipt(userId: string, receiptData: string, provider: 'APPLE' | 'GOOGLE' | 'STRIPE', planId: string) {
     // 1. REAL IMPLEMENTATION: Send receiptData to Apple (https://buy.itunes.apple.com/verifyReceipt)
@@ -30,12 +33,20 @@ export class PaymentsService {
     const currentPeriodStart = new Date();
     const currentPeriodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // + 30 days
 
-    return await this.subRepo.manager.transaction(async (manager) => {
-      // 2. Anti-fraud: Ensure the transaction isn't already processed
-      const existingTxn = await manager.findOne(TransactionHistory, { where: { transactionId: verifiedTransactionId } });
-      if (existingTxn) throw new ConflictException('Transaction already processed');
+    // Attempt to acquire distributed lock for this transaction to prevent Race Condition Double Spend
+    const lockKey = `lock:payment:verify:${verifiedTransactionId}`;
+    const acquiredLock = await this.redis.getClient().set(lockKey, '1', 'EX', 10, 'NX');
+    if (!acquiredLock) {
+      throw new ConflictException('Transaction is currently being processed by another worker');
+    }
 
-      // 3. Check for existing subscription for this user
+    try {
+      return await this.subRepo.manager.transaction(async (manager) => {
+        // 2. Anti-fraud: Ensure the transaction isn't already processed (Atomic-like constraint)
+        const existingTxn = await manager.findOne(TransactionHistory, { where: { transactionId: verifiedTransactionId } });
+        if (existingTxn) throw new ConflictException('Transaction already processed');
+
+        // 3. Check for existing subscription for this user
       let subscription = await manager.findOne(Subscription, { where: { userId } });
 
       let type: 'NEW' | 'RENEWAL' = 'NEW';
@@ -78,15 +89,19 @@ export class PaymentsService {
       await manager.save(transaction);
 
       // 5. Update user tier
-      await manager.update(User, { id: userId }, { tier: planId as 'PRO' | 'UNLIMITED' });
+        await manager.update(User, { id: userId }, { tier: planId as 'PRO' | 'UNLIMITED' });
 
-      this.logger.log(`Verified ${provider} receipt for user ${userId}. Granted ${planId}.`);
+        this.logger.log(`Verified ${provider} receipt for user ${userId}. Granted ${planId}.`);
 
-      return {
-        message: 'Receipt verified and subscription active.',
-        subscription,
-      };
-    });
+        return {
+          message: 'Receipt verified and subscription active.',
+          subscription,
+        };
+      });
+    } finally {
+      // Release lock
+      await this.redis.getClient().del(lockKey);
+    }
   }
 
   /**

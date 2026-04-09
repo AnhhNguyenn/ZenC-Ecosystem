@@ -422,11 +422,18 @@ export class GeminiService implements OnModuleDestroy {
     if (session) {
       session.isAlive = false;
       if (session.ws && session.ws.readyState === WebSocket.OPEN) {
-        session.ws.close();
+        // Send a client content message to immediately signal end of turn (abort billing)
+        try {
+          session.ws.send(JSON.stringify({ clientContent: { turns: [], turnComplete: true } }));
+        } catch (e) {
+          // Ignore
+        }
+        // Forcefully close the connection
+        session.ws.terminate();
       }
       session.emitter.removeAllListeners();
       this.activeSessions.delete(sessionId);
-      this.logger.log(`Gemini session closed: ${sessionId}`);
+      this.logger.log(`Gemini session forcefully closed/aborted: ${sessionId}`);
     }
   }
 

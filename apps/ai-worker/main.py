@@ -67,13 +67,7 @@ logger = logging.getLogger("zenc.worker")
 settings = get_settings()
 
 def user_id_and_ip_key_builder(request):
-    ip = get_remote_address(request)
-    try:
-        body = json.loads(request._body)
-        user_id = body.get("userId", "anonymous")
-    except Exception:
-        user_id = "anonymous"
-    return f"{ip}:{user_id}"
+    return get_remote_address(request)
 
 limiter = Limiter(
     key_func=user_id_and_ip_key_builder,

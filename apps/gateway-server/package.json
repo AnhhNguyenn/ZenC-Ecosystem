@@ -41,6 +41,7 @@
     "@types/cron": "^2.0.1",
     "amqp-connection-manager": "^5.0.0",
     "amqplib": "^0.10.9",
+    "apple-signin-auth": "^2.0.0",
     "bcrypt": "^5.1.1",
     "bullmq": "^5.70.4",
     "class-transformer": "^0.5.1",

@@ -22,7 +22,7 @@ import * as appleSignin from 'apple-signin-auth';
 import { HttpException, HttpStatus } from '@nestjs/common';
 
 const DUMMY_PASSWORD_HASH =
-  '$2b$10$6k7bRe1f4H4q.WxqnSxTiOzjll6T6hmN6xL2dMcQ4S0QxqjEWLTFK'; // bcrypt('not-the-right-password')
+  '$2b$12$FHfhUFTSaKPv9M23XXg2zOnG7wesGNOyj28UkDlpV6Zl/mDCEdKTS'; // bcrypt 12-round hash for 'not-the-right-password' to prevent timing attacks
 
 export interface AuthUserDto {
   id: string;
@@ -394,8 +394,14 @@ export class AuthService {
         passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
         status: 'ACTIVE',
         tier: 'FREE',
-        emailVerified: true,
+        emailVerified: true, // Assuming Social Login implicitly verifies the email
       });
+      await this.userRepo.save(user);
+    } else if (user.status === 'UNVERIFIED' as any) {
+      // If the user previously registered via regular email but never verified it,
+      // a successful Social Login should implicitly verify the account.
+      user.status = 'ACTIVE';
+      user.emailVerified = true;
       await this.userRepo.save(user);
     }
 

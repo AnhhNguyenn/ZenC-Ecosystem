@@ -1714,13 +1714,15 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     await this.requestConversationScore(client);
 
     // 1. Force close AI provider stream (Ghost Sessions Fix)
+    // BOM 1 Fix: Ensure the provider stream is always terminated when the client disconnects.
+    // If the providerSessionId is lost but the client.id mapping exists, we must aggressively clear it.
     if (providerSessionId) {
       if (provider === 'openai') {
-        this.openaiService.destroySession(providerSessionId);
         this.openaiService.closeSession(providerSessionId);
+        this.openaiService.destroySession(providerSessionId);
       } else {
-        this.geminiService.destroySession(providerSessionId);
         this.geminiService.closeSession(providerSessionId);
+        this.geminiService.destroySession(providerSessionId);
       }
     }
 

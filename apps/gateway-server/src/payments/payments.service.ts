@@ -5,6 +5,7 @@ import { Subscription } from '../entities/subscription.entity';
 import { TransactionHistory } from '../entities/transaction-history.entity';
 import { User } from '../entities/user.entity';
 import { RedisService } from '../common/redis.service';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class PaymentsService {
@@ -35,7 +36,8 @@ export class PaymentsService {
 
     // Attempt to acquire distributed lock for this transaction to prevent Race Condition Double Spend
     const lockKey = `lock:payment:verify:${verifiedTransactionId}`;
-    const acquiredLock = await this.redis.getClient().set(lockKey, '1', 'EX', 10, 'NX');
+    const lockValue = crypto.randomUUID(); // BOM 2 Fix: Secure lock value to prevent deleting another worker's lock
+    const acquiredLock = await this.redis.getClient().set(lockKey, lockValue, 'EX', 15, 'NX'); // BOM 2 Fix: TTL 15s
     if (!acquiredLock) {
       throw new ConflictException('Transaction is currently being processed by another worker');
     }
@@ -99,8 +101,15 @@ export class PaymentsService {
         };
       });
     } finally {
-      // Release lock
-      await this.redis.getClient().del(lockKey);
+      // BOM 2 Fix: Lua Script to atomically delete the lock ONLY IF we still own it
+      const luaScript = `
+        if redis.call("get", KEYS[1]) == ARGV[1] then
+          return redis.call("del", KEYS[1])
+        else
+          return 0
+        end
+      `;
+      await this.redis.getClient().eval(luaScript, 1, lockKey, lockValue);
     }
   }
 

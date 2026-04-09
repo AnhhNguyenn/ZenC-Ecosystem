@@ -140,14 +140,17 @@ export class AuthService {
       await this.redis.getClient().set(otpKey, otp, 'EX', 300);
 
       // Dispatch event to RabbitMQ for sending the OTP email
-      await this.rabbitmq.dispatchDeepBrainTask('SEND_OTP_EMAIL', {
-        userId: typedUser.id,
-        email: typedUser.email,
-        otp,
-      });
-
-      // Also send directly if email is configured (Fallback for missing worker)
-      await this.sendEmailOtp(typedUser.email, otp, 'register');
+      try {
+        await this.rabbitmq.dispatchDeepBrainTask('SEND_OTP_EMAIL', {
+          userId: typedUser.id,
+          email: typedUser.email,
+          otp,
+        });
+      } catch (dispatchError) {
+        this.logger.warn(`RabbitMQ dispatch failed, falling back to direct email for ${typedUser.email}`);
+        // Send directly if RabbitMQ is down (Fallback for missing worker)
+        await this.sendEmailOtp(typedUser.email, otp, 'register');
+      }
 
       this.logger.log(`User registered (UNVERIFIED): ${typedUser.email}`);
     } catch (error) {
@@ -193,6 +196,8 @@ export class AuthService {
       const configBonus = await this.redis.getClient().get('SYSTEM_CONFIG:WELCOME_BONUS_TOKENS');
       const welcomeBonus = configBonus ? parseInt(configBonus, 10) : 1000;
 
+      let activeUser!: User;
+
       await this.dataSource.transaction(async (manager) => {
         const transactionalUserRepo = manager.getRepository(User);
 
@@ -200,10 +205,10 @@ export class AuthService {
           status: 'ACTIVE',
           tokenBalance: () => `tokenBalance + ${welcomeBonus}`,
         });
-      });
 
-      // Reload user to get updated state for tokens
-      const activeUser = await this.userRepo.findOneOrFail({ where: { id: user.id } });
+        // Fetch active user from within the transaction to prevent Replica Lag
+        activeUser = await transactionalUserRepo.findOneOrFail({ where: { id: user.id } });
+      });
 
       // Caching profile
       const profile = await this.profileRepo.findOne({ where: { userId: activeUser.id } });
@@ -331,13 +336,17 @@ export class AuthService {
 
   private async executeBackgroundOtpResend(user: User, otp: string): Promise<void> {
     try {
-      await this.rabbitmq.dispatchDeepBrainTask('SEND_OTP_EMAIL', {
-        userId: user.id,
-        email: user.email,
-        otp,
-      });
+      try {
+        await this.rabbitmq.dispatchDeepBrainTask('SEND_OTP_EMAIL', {
+          userId: user.id,
+          email: user.email,
+          otp,
+        });
+      } catch (dispatchError) {
+        this.logger.warn(`RabbitMQ dispatch failed, falling back to direct email for ${user.email}`);
+        await this.sendEmailOtp(user.email, otp, 'register');
+      }
 
-      await this.sendEmailOtp(user.email, otp, 'register');
       this.logger.log(`Resent OTP (UNVERIFIED): ${user.email}`);
     } catch (error) {
       this.logger.error(`Failed to resend OTP for ${user.email}: ${(error as Error).message}`);

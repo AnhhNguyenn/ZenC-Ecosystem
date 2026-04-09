@@ -60,6 +60,14 @@ export class VerifyOtpDto {
   otp!: string;
 }
 
+export class ResendOtpDto {
+  @Transform(({ value }) => value?.trim().toLowerCase())
+  @IsNotEmpty()
+  @IsEmail()
+  @MaxLength(255)
+  email!: string;
+}
+
 export class ForgotPasswordDto {
   @Transform(({ value }) => value?.trim().toLowerCase())
   @IsNotEmpty()

@@ -91,10 +91,23 @@ export class TokenWatchdogInterceptor implements NestInterceptor {
       tap(async (responseData) => {
         try {
           /**
-           * Estimate response tokens from the serialized response size.
-           * This captures the actual AI-generated content cost.
+           * Estimate response tokens safely without blocking the Event Loop.
+           * Do NOT use JSON.stringify(responseData).length for large payloads.
+           * Instead, use a fixed heuristic or a shallow byte length estimate
+           * for REST API calls (Voice/AI streams use exact token counting anyway).
            */
-          const responseSize = JSON.stringify(responseData).length;
+          let responseSize = 100; // Baseline assumption for standard REST payload
+
+          if (responseData && typeof responseData === 'object') {
+             // Shallow estimate: 50 bytes per top-level key to avoid deep recursion O(N)
+             responseSize = Object.keys(responseData).length * 50;
+
+             // If there's a specific 'data' string (like a transcript), add its length
+             if (typeof responseData.data === 'string') {
+                responseSize += responseData.data.length;
+             }
+          }
+
           const estimatedResponseTokens = Math.ceil(responseSize / 4);
 
           if (estimatedResponseTokens > 0) {

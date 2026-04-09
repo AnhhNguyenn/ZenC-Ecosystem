@@ -14,7 +14,7 @@ import { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
-import { JwtPayload, LoginDto, RefreshTokenDto, RegisterDto, VerifyOtpDto, ForgotPasswordDto, ResetPasswordDto, SocialLoginDto } from './auth.dto';
+import { JwtPayload, LoginDto, RefreshTokenDto, RegisterDto, VerifyOtpDto, ForgotPasswordDto, ResetPasswordDto, SocialLoginDto, ResendOtpDto } from './auth.dto';
 import { Headers, Ip } from '@nestjs/common';
 
 @Controller('auth')
@@ -37,6 +37,20 @@ export class AuthController {
       statusCode: HttpStatus.CREATED,
       message: 'Registration initiated. Please verify your OTP to complete registration.',
       data: result,
+    };
+  }
+
+  @Post('resend-otp')
+  @HttpCode(HttpStatus.OK)
+  async resendOtp(
+    @Body() dto: ResendOtpDto,
+    @Headers('x-device-id') deviceId?: string,
+    @Ip() ipAddress?: string,
+  ) {
+    const result = await this.authService.resendOtp(dto.email, deviceId, ipAddress);
+    return {
+      statusCode: HttpStatus.OK,
+      message: result.message,
     };
   }
 

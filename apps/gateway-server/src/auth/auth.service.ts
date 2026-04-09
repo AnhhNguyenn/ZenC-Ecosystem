@@ -189,9 +189,9 @@ export class AuthService {
     let authResult!: AuthResultDto;
 
     try {
-      // Fetch dynamic bonus config (default to 0 if not set) OUTSIDE transaction to prevent DB Lock
+      // Fetch dynamic bonus config (default to 1000 if not set) OUTSIDE transaction to prevent DB Lock
       const configBonus = await this.redis.getClient().get('SYSTEM_CONFIG:WELCOME_BONUS_TOKENS');
-      const welcomeBonus = configBonus ? parseInt(configBonus, 10) : 0;
+      const welcomeBonus = configBonus ? parseInt(configBonus, 10) : 1000;
 
       await this.dataSource.transaction(async (manager) => {
         const transactionalUserRepo = manager.getRepository(User);
@@ -299,6 +299,51 @@ export class AuthService {
     }
   }
 
+  async resendOtp(email: string, deviceId?: string, ipAddress?: string): Promise<{ message: string }> {
+    await this.checkRateLimit(`resend_otp`, ipAddress || 'unknown_ip', deviceId);
+
+    const normalizedEmail = this.normalizeEmail(email);
+    const user = await this.userRepo.findOne({ where: { email: normalizedEmail } });
+
+    if (!user || user.status !== ('UNVERIFIED' as any)) {
+      // Fake delay to prevent timing attack enumeration
+      await bcrypt.hash('fake-delay-password', this.saltRounds);
+      return { message: 'If this email requires an OTP, it has been resent.' };
+    }
+
+    const otpKey = `auth_otp:${user.id}`;
+    // Check if an OTP was generated too recently to prevent spamming the email service
+    const ttl = await this.redis.getClient().ttl(otpKey);
+    if (ttl > 240) { // If it was generated in the last 60 seconds (300 - 240)
+      throw new HttpException('Please wait before requesting a new OTP.', HttpStatus.TOO_MANY_REQUESTS);
+    }
+
+    const otp = crypto.randomInt(100000, 1000000).toString();
+    await this.redis.getClient().set(otpKey, otp, 'EX', 300);
+
+    // Run email dispatch in background to prevent I/O timing attacks
+    this.executeBackgroundOtpResend(user, otp).catch((err) => {
+      this.logger.error(`Background OTP resend failed for ${email}: ${err.message}`, err.stack);
+    });
+
+    return { message: 'If this email requires an OTP, it has been resent.' };
+  }
+
+  private async executeBackgroundOtpResend(user: User, otp: string): Promise<void> {
+    try {
+      await this.rabbitmq.dispatchDeepBrainTask('SEND_OTP_EMAIL', {
+        userId: user.id,
+        email: user.email,
+        otp,
+      });
+
+      await this.sendEmailOtp(user.email, otp, 'register');
+      this.logger.log(`Resent OTP (UNVERIFIED): ${user.email}`);
+    } catch (error) {
+      this.logger.error(`Failed to resend OTP for ${user.email}: ${(error as Error).message}`);
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // BỐI CẢNH 1: HỆ THỐNG FORGOT PASSWORD (QUÊN MẬT KHẨU)
   // ═══════════════════════════════════════════════════════════════
@@ -388,12 +433,17 @@ export class AuthService {
     let user = await this.userRepo.findOne({ where: { email: decodedEmail, isDeleted: false } });
 
     if (!user) {
+      // Fetch dynamic bonus config for Social Login onboarding
+      const configBonus = await this.redis.getClient().get('SYSTEM_CONFIG:WELCOME_BONUS_TOKENS');
+      const welcomeBonus = configBonus ? parseInt(configBonus, 10) : 1000;
+
       // Tự động tạo user mới nếu chưa có (Zero-friction Onboarding)
       user = this.userRepo.create({
         email: decodedEmail,
         passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
         status: 'ACTIVE',
         tier: 'FREE',
+        tokenBalance: welcomeBonus,
         emailVerified: true, // Assuming Social Login implicitly verifies the email
       });
       await this.userRepo.save(user);
